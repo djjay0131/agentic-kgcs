@@ -11,3 +11,5 @@
 Works: nothing built yet (docs/governance only).
 Not built yet: packaging (Plan 1 Task 2), gate/ (Plan 2), plane/ +
 review/ (Plan 4), registry advisor (Plan 5).
+- 2026-07-12: PR #1 (delta amendment) merged by owner. Governance upgraded
+  to agentic-governance v0.2 (steward INACTIVE) via delta upgrade PR.
