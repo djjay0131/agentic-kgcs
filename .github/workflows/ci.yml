@@ -16,6 +16,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Cross-repo install needs a credential: agentic-kgis is a private repo,
+      # and this repo's default GITHUB_TOKEN cannot read it. Fail with an
+      # actionable message if the PAT secret is missing rather than a cryptic
+      # git-auth error.
+      - name: Require cross-repo credential
+        run: |
+          if [ -z "${{ secrets.CONSTELLATION_PAT }}" ]; then
+            echo "::error::CONSTELLATION_PAT secret is not set on this repo. Add a PAT with read access to djjay0131/agentic-kgis (Settings → Secrets and variables → Actions → New repository secret), or make agentic-kgis public and drop the token from the install URL below."
+            exit 1
+          fi
       # PEP 508 named direct reference: pip records this as satisfying the
       # `agentic-kgis>=0.2.0` requirement by name, so the editable install below
       # does not try to re-resolve it from a package index (where it does not
