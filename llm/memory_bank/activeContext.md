@@ -1,6 +1,20 @@
 # Active Context — agentic-kgcs
 
-Update 2026-07-10: External design review (ChatGPT, agentic-kgis PR #1)
+Update 2026-07-12: **Bootstrapped with packaging + cross-repo contract
+verification.** agentic-kgis Plan 1 v2 (19 tasks) shipped `kg_contracts`
+v2's public API. This repo installs it editable
+(`pip install -e ../agentic-kgis`) and verifies consumability in
+`tests/test_contracts_available.py`: imports `AdjudicationRoute`,
+`CandidateScores`, `ConfidencePolicy` from the top-level package and
+`CandidateSink`/`GraphMutationStore` from `kg_contracts.stores`, then
+runs the reusable `CandidateSinkContract` and `GraphMutationStoreContract`
+suites (`kg_contracts.testing`) against the memory adapters — both green,
+plus the confidence-policy smoke test. CI wired
+(`.github/workflows/ci.yml`, installs the sibling repo via
+`CONSTELLATION_PAT`). `pytest` and `ruff check src tests` green.
+NEXT: implementation starts at Plan 3 (curation core + executor).
+
+Prior state (2026-07-10): External design review (ChatGPT, agentic-kgis PR #1)
 dispositioned and approved. Architecture amended: candidate ledger separate
 from canonical graph; pure curation core → CurationPlan → executor
 (replaces CuratedGraphStore wrapper; ADR-0010 in agentic-kgis); ER =
