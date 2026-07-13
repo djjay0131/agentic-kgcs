@@ -2,12 +2,12 @@ name: ci
 on: [push, pull_request]
 
 # Cross-repo dependency: agentic-kgcs depends on `kg_contracts`, shipped by the
-# sibling `agentic-kgis` distribution (ADR-0002 as amended). That distribution
-# is private and not on any package index, so CI installs it from git BEFORE the
-# editable install of this repo, pinned to `main`. This means the kg_contracts
-# code must be merged to agentic-kgis `main` for this job to pass — kgcs PR #4
-# is gated on agentic-kgis PR #6 (kg_contracts v2) merging first. It is NOT
-# pinned to a feature branch, which would break once that branch is deleted.
+# sibling `agentic-kgis` distribution (ADR-0002 as amended). That distribution is
+# public but not on any package index, so CI installs it from git BEFORE the
+# editable install of this repo, pinned to `main`. The kg_contracts code must be
+# merged to agentic-kgis `main` for this job to pass — kgcs PR #4 is gated on
+# agentic-kgis PR #6 (kg_contracts v2) merging first. It is NOT pinned to a
+# feature branch, which would break once that branch is deleted.
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,21 +16,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Cross-repo install needs a credential: agentic-kgis is a private repo,
-      # and this repo's default GITHUB_TOKEN cannot read it. Fail with an
-      # actionable message if the PAT secret is missing rather than a cryptic
-      # git-auth error.
-      - name: Require cross-repo credential
-        run: |
-          if [ -z "${{ secrets.CONSTELLATION_PAT }}" ]; then
-            echo "::error::CONSTELLATION_PAT secret is not set on this repo. Add a PAT with read access to djjay0131/agentic-kgis (Settings → Secrets and variables → Actions → New repository secret), or make agentic-kgis public and drop the token from the install URL below."
-            exit 1
-          fi
       # PEP 508 named direct reference: pip records this as satisfying the
       # `agentic-kgis>=0.2.0` requirement by name, so the editable install below
       # does not try to re-resolve it from a package index (where it does not
-      # exist). `@main` makes the ref explicit.
-      - run: pip install "agentic-kgis @ git+https://x-access-token:${{ secrets.CONSTELLATION_PAT }}@github.com/djjay0131/agentic-kgis.git@main"
+      # exist). `@main` makes the ref explicit. agentic-kgis is public, so no
+      # token is needed for the clone.
+      - run: pip install "agentic-kgis @ git+https://github.com/djjay0131/agentic-kgis.git@main"
       - run: pip install -e '.[dev]'
       - run: ruff check src tests
       - run: mypy src
