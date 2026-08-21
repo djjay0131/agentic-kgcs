@@ -1,5 +1,6 @@
 def test_kgcs_imports_and_sees_contracts() -> None:
     import kg_contracts
+
     import kgcs
 
     assert kgcs.__name__ == "kgcs"
