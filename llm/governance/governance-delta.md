@@ -1,8 +1,8 @@
 # Governance Delta: agentic-kgcs
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
-Last updated: 2026-07-10
-Governance: agentic-governance v0.2
+Last updated: 2026-08-21
+Governance: agentic-governance v0.3
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -24,6 +24,12 @@ It depends only on `kg_contracts` from `agentic-kgis`.
 
 `agentic-kgis/docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
 (the shared KGIS/KGCS design spec lives in the sibling repo).
+
+**Cross-repo path, not yet migrated.** This is `agentic-kgis`'s current
+path. When that repo adopts v0.3 the spec moves to
+`agentic-kgis/llm/specs/2026-07-09-kgis-kgcs-design.md`, and this field —
+plus the citations in `README.md`, `CONTRIBUTING.md` and
+`.github/pull_request_template.md` — must be repointed in the same pass.
 
 ## Project Principles
 
@@ -62,9 +68,24 @@ It depends only on `kg_contracts` from `agentic-kgis`.
 - Could uncertain/ledger data leak into canonical reads or projections?
 - Does this keep kgcs depending only on kg_contracts?
 
-## Memory Bank
+## Repository Layout
 
-Path: `llm/memory_bank/`
+The paths this repo binds (agentic-governance
+`llm/governance/project-operating-system.md` §Repository Areas prescribes
+the shape; this block binds it here). Only the slots this repo uses are
+declared.
+
+- Governance directory: `llm/governance/`
+- ADR directory: `llm/governance/adr/`
+- Memory-bank path: `llm/memory_bank/`
+- Artifacts directory (the data plane): `docs/`
+
+Not yet declared, because this repo has no such content today:
+constitution directory (role charters are canonical, not local), features
+directory, plans directory, and spec directory — the design authority is
+the sibling repo's shared spec. `CLAUDE.md` still routes new design specs
+to `llm/specs/` and new implementation plans to `llm/plans/`; declare
+those slots here when the first one is created.
 
 ## Roadmap
 
@@ -73,20 +94,32 @@ serves as the roadmap).
 
 ## Governance Check Command
 
-`node ~/code/agentic-governance/governance/scripts/governance-checks.mjs`
-(canonical script from the agentic-governance checkout; CI wiring pending.)
+`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`
+(canonical script from the agentic-governance checkout. `--layout` must be
+in the recorded command, not run only at onboarding.)
+
+CI wiring: **live** via `.github/workflows/governance-checks.yml` (runs on
+every PR and on pushes to `main`). Because the canonical script lives
+outside this repo, the workflow fetches agentic-governance pinned to a
+commit SHA, kept in sync with the governance version above. Not yet a
+*required* status check — branch protection is unavailable on this repo's
+plan (see Platform Enforcement Reality).
 
 ## L0 Path Allowlist
 
 ```l0-allowlist
+# Instance of agentic-governance llm/governance/l0-fast-track.md
+# §Template Allowlist — the source of this rule set and its grammar.
 allow llm/memory_bank/** path-only
-allow docs/adr/README.md index-table-rows
-allow docs/adr/[0-9][0-9][0-9][0-9]-*.md status-line-only
+allow llm/governance/adr/README.md index-table-rows
+allow llm/governance/adr/[0-9][0-9][0-9][0-9]-*.md status-line-only
+allow llm/** link-target-only
 allow docs/** link-target-only
 deny src/**
 deny scripts/**
 deny .github/**
-deny docs/adr/0000-template.md
+deny llm/governance/governance-delta.md
+deny llm/governance/adr/0000-template.md
 ```
 
 ## Platform Enforcement Reality
@@ -106,7 +139,7 @@ deny docs/adr/0000-template.md
 Status: INACTIVE
 
 Steward merge authority ships inert (agentic-governance
-`docs/l0-fast-track.md` §Per-Repo Activation). No activation ADR or PR
+`llm/governance/l0-fast-track.md` §Per-Repo Activation). No activation ADR or PR
 exists; all merges are human-owner-only.
 
 ## Milestone Labels
@@ -131,4 +164,4 @@ None.
 
 - `agentic-kgis` — hosts `kg_contracts` (this repo's only dependency), the
   shared design spec, and system-level ADRs. kgcs-local ADRs live here in
-  `docs/adr/`.
+  `llm/governance/adr/`.
