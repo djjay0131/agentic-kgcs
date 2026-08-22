@@ -30,6 +30,8 @@ to a real ADR (here or in `agentic-kgis/docs/adr/`) is the owner's call.
 - [0009 — no ER-decision/propose-link type in `kg_contracts`](0009-no-er-action-contract-type.md)
 - [0010 — `ClusterSnapshot` and `Precondition(cluster_version)` model the same check twice](0010-cluster-snapshot-vs-precondition.md)
 - [0011 — identity authority mode is not a first-class contract field](0011-identity-authority-not-first-class.md)
+- [0012 — no contract home for an LLM adviser assessment](0012-no-adviser-assessment-contract-type.md)
 
 0001–0004 surfaced in Wave 0 (deterministic core); 0005–0008 in Wave 2 (ER 5a);
-0009–0011 in Wave 3 (cluster validation + resolution policy + profiles).
+0009–0011 in Wave 3 (cluster validation + resolution policy + profiles); 0012
+in Wave 4 (LLM curation orchestrator).

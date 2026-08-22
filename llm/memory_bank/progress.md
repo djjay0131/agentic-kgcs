@@ -41,6 +41,13 @@
   strict mypy. ADR candidates 0009–0011. Branch `wave3/cluster-policy`,
   stacked on Wave 2.
 
+- 2026-08-22: Wave 4 (PR E) — bounded LLM curation orchestrator + 5 specialist
+  advisers. `src/kgcs/advisers/` (completion seam + recorded/replay + failure
+  clients; StructuredAdviser; CurationOrchestrator). Advisers never write the
+  graph (law 16), the deterministic baseline survives every LLM failure (law
+  1), advice never overrides reject-only (law 13). 254 pytest, ruff, strict
+  mypy. ADR candidate 0012. Branch `wave4/llm-advisers`, stacked on Wave 3.
+
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →
 audit) reconciled onto v0.3, gates green, pending independent review + owner
