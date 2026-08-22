@@ -54,6 +54,12 @@
   10); evolution ops compensable (law 8); ontology promotion gated (law 12).
   333 pytest, ruff, strict mypy. ADR candidate 0013. PR F based on
   `integration/pre-recuration` (Wave 1 ⊕ Wave 4), diff recuration-only.
+- 2026-08-22: Wave 6 (PR G) — review API/queue/CLI + backlog/backpressure.
+  `src/kgcs/review/` (PersistentReviewQueue passing ReviewQueueContract; typed
+  retryable/permanent failures — law 15; ReviewRouter converging human
+  decisions on the same plan path as auto — law 14; BacklogAnalyzer +
+  BackpressureSignal; stdlib CLI). 363 pytest, ruff, strict mypy. ADR candidate
+  0014. Branch `wave6/review-queue`, stacked on Wave 5.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →
