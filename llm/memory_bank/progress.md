@@ -17,7 +17,21 @@
   green against the memory adapters; CI wired. `pytest` and
   `ruff check src tests` green.
 
-Works: packaging + cross-repo contract verification against
-`kg_contracts` v2.
-Not built yet: curation core + executor (Plan 3), ER (Plan 5a/5b),
-eval + review (Plan 6), registry advisor (Plan 7).
+- 2026-08-21: Wave 0 of the orchestrated KGCS v1 build. Reconciled the
+  Sprint-1 deterministic curation core (PR #5) onto governance v0.3: reset
+  `feature/sprint-1-curation-core` onto current `main` (backup at
+  `backup/pr5-original`), re-applied `src/kgcs/**` + `tests/kgcs/**`, moved
+  the four ADR candidates from the stale `docs/adr/` plane to
+  `llm/governance/adr/candidates/**`, and added reconciliation notes (all
+  four still open vs current `kg_contracts`). Gates green: 98 pytest, ruff,
+  strict mypy. Core still stops at `CurationPlan`; no executor smuggled in.
+
+Works: packaging + cross-repo contract verification against `kg_contracts`
+v2; deterministic curation core (Candidate → validate → policy → plan →
+audit) reconciled onto v0.3, gates green, pending independent review + owner
+merge (PR #5 / PR A).
+Not built yet: transaction-aware executor + compensation + epochs (Wave 1),
+ER 5a/5b (Waves 2–3), LLM curation orchestrator (Wave 4), re-curation +
+concept/ontology evolution (Wave 5), review queue/CLI + backpressure (Wave
+6), semantic audit/replay + kg_eval (Wave 7), cross-repo E2E (Wave 8),
+steward/release reconciliation (Wave 9).

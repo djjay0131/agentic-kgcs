@@ -1,5 +1,21 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-21: **Wave 0 of the orchestrated KGCS v1 build
+(`llm/plans/2026-08-22-kgcs-v1-orchestrated-build.md`) — reconciling the
+deterministic curation core (PR #5) onto governance v0.3.** PR #5 was
+branched before the v0.3 `llm/`-control-plane migration, so its diff wrongly
+"deleted" main's new layout and wrote ADR candidates under `docs/adr/`. The
+branch was reset onto current `main` (backup at `backup/pr5-original`), the
+substantive code re-applied (`src/kgcs/**`, `tests/kgcs/**`), and the four
+ADR candidates relocated to `llm/governance/adr/candidates/**` with Wave-0
+reconciliation notes appended (all four remain open against current
+`kg_contracts`; 0003 is now a Wave-1 executor concern, 0002 matches the
+plan's separate-semantic-audit guidance). Gates green on the reconciled
+branch: 98 pytest, `ruff check src tests`, `mypy src` strict — against
+`kg_contracts` from `agentic-kgis` main. The deterministic core still stops
+at `CurationPlan` (no executor). NEXT: independent architectural review of
+the core, then Wave 1 (transaction-aware executor + compensation + epochs).
+
 Update 2026-07-12: **Bootstrapped with packaging + cross-repo contract
 verification.** agentic-kgis Plan 1 v2 (19 tasks) shipped `kg_contracts`
 v2's public API. This repo installs it editable
