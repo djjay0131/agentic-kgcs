@@ -73,6 +73,13 @@
   shapes (epoch N → N+1, history preserved); six scenarios + §9 laws asserted
   end-to-end. 430 pytest, ruff, strict mypy. ADR candidates 0015, 0016. Branch
   `wave8/e2e`, stacked on Wave 7.
+- 2026-08-22: Wave 9 — steward reconciliation. All nine waves implemented as
+  independently-reviewed owner-ready DRAFT PRs (#5, #10–#17). DG-1..DG-5
+  dispositioned (all durable), Issue #2 dispositioned (items 2/3 delivered;
+  1/4 KGIS/contract-owned), 16 ADR candidates open for owner adjudication,
+  release boundary v0.1.0 recommended. Full detail in
+  `llm/memory_bank/kgcs-v1-reconciliation.md`. Top-of-stack: 435 pytest, ruff,
+  strict mypy, governance 4/4.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →

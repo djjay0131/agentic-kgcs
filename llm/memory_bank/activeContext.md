@@ -1,5 +1,17 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 9 — steward reconciliation): **KGCS v1 orchestrated
+build complete — all nine waves implemented as independently-reviewed,
+owner-ready DRAFT PRs (#5, #10–#17). Nothing merged; awaiting owner review.**
+Full reconciliation (PR stack + merge order, DG-1..DG-5 dispositions, Issue #2
+disposition, deferred/adopter work, release boundary) is in
+[`kgcs-v1-reconciliation.md`](kgcs-v1-reconciliation.md). Top-of-stack gates:
+435 pytest, ruff, strict mypy (49 files), governance layout 4/4. DG-1..DG-5 all
+became durable architecture (plan defaults, no contract change). Issue #2 items
+2 & 3 delivered (reject-only profile + projection-consumer); items 1 (erasure)
+& 4 (PII keys) are KGIS/contract-owned. 16 ADR candidates raised, all open for
+owner adjudication. Recommended first release: KGCS v0.1.0 on merge of A–I.
+
 Update 2026-08-22 (Wave 8, PR I): **KGIS→KGCS end-to-end — the flagship.** On
 branch `wave8/e2e`, stacked on Wave 7. Test-only (`tests/kgcs/e2e_harness.py` +
 `test_e2e_*.py`), no `src/` change; `src/kgcs` still imports no `kgis`.
