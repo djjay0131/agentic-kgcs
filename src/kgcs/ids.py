@@ -94,6 +94,14 @@ class IdFactory(Protocol):
         """Mint an `AuditRecord.audit_id` (`au_…`)."""
         ...
 
+    def batch_id(self, seed: str) -> str:
+        """Mint a `GraphMutationBatch.batch_id` (`mb_…`) for the executor."""
+        ...
+
+    def execution_id(self, seed: str) -> str:
+        """Mint a KGCS `ExecutionRecord.execution_id` (`ex_…`)."""
+        ...
+
 
 class DerivedIdFactory:
     """Deterministic `IdFactory`: every ID is a pure hash of its seed.
@@ -124,6 +132,12 @@ class DerivedIdFactory:
     def audit_id(self, seed: str) -> str:
         return "au_" + _derive_token(seed)
 
+    def batch_id(self, seed: str) -> str:
+        return "mb_" + _derive_token(seed)
+
+    def execution_id(self, seed: str) -> str:
+        return "ex_" + _derive_token(seed)
+
 
 class UlidIdFactory:
     """Non-deterministic `IdFactory`: ULID-backed, globally unique, sortable.
@@ -148,6 +162,12 @@ class UlidIdFactory:
 
     def audit_id(self, seed: str) -> str:
         return "au_" + _new_ulid()
+
+    def batch_id(self, seed: str) -> str:
+        return "mb_" + _new_ulid()
+
+    def execution_id(self, seed: str) -> str:
+        return "ex_" + _new_ulid()
 
 
 def _new_ulid() -> str:
