@@ -67,6 +67,12 @@
   MetricProvider with no kg_eval reverse dep). 409 pytest, ruff, strict mypy.
   No new ADR candidate (reuses 0002/0012). Branch `wave7/audit-eval`, stacked
   on Wave 6.
+- 2026-08-22: Wave 8 (PR I) — KGIS→KGCS end-to-end (flagship). Test-only
+  (`tests/kgcs/e2e_harness.py` + `test_e2e_*.py`). Real `kgis.IngestPipeline`
+  driven in scenario 1; flagship re-curation parametrized over paper + sensor
+  shapes (epoch N → N+1, history preserved); six scenarios + §9 laws asserted
+  end-to-end. 430 pytest, ruff, strict mypy. ADR candidates 0015, 0016. Branch
+  `wave8/e2e`, stacked on Wave 7.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →
