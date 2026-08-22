@@ -23,3 +23,9 @@ to a real ADR (here or in `agentic-kgis/docs/adr/`) is the owner's call.
 - [0002 — `AuditRecord` has no candidate/validation/resolution linkage](0002-audit-record-lacks-candidate-lineage.md)
 - [0003 — deterministic core cannot emit per-subject preconditions without a snapshot read](0003-preconditions-need-snapshot-read.md)
 - [0004 — no authority provenance on candidates](0004-no-authority-provenance-on-candidates.md)
+- [0005 — `kg_contracts` has no strong-identifier taxonomy](0005-no-strong-identifier-taxonomy.md)
+- [0006 — no canonical name for an entity embedding](0006-no-canonical-entity-embedding-slot.md)
+- [0007 — `EntityCandidate` carries no `valid_period`](0007-entity-candidate-has-no-valid-period.md)
+- [0008 — `CanonicalEntity` carries no scores](0008-canonical-entity-has-no-scores.md)
+
+0001–0004 surfaced in Wave 0 (deterministic core); 0005–0008 in Wave 2 (ER 5a).

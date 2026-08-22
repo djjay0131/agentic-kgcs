@@ -20,6 +20,30 @@ determinism primitives (`clock`, `ids`, `scores`) and the in-memory
 from kgcs.audit import AuditRecorder, AuditSink
 from kgcs.clock import Clock, FixedClock, SystemClock
 from kgcs.engine import CandidateOutcome, CurationEngine, EngineResult
+from kgcs.er import (
+    BlockingPipeline,
+    CalibratedMatcher,
+    CalibrationKey,
+    CalibrationMetrics,
+    CalibrationModel,
+    CandidatePair,
+    DefaultFeatureExtractor,
+    DefaultNormalizer,
+    DeterministicRuleMatcher,
+    EmbeddingChannel,
+    ExactIdentifierChannel,
+    FeatureAgreement,
+    GoldenSet,
+    IdentitySignal,
+    LabeledPair,
+    MatchResult,
+    NormalizedEntity,
+    NormalizedNameChannel,
+    PairFeatures,
+    SharedStrongIdentifierRule,
+    SourceKeyChannel,
+    evaluate,
+)
 from kgcs.ids import DerivedIdFactory, IdFactory, UlidIdFactory, is_well_formed_graph_id
 from kgcs.memory import InMemoryAuditSink
 from kgcs.planner import (
@@ -77,4 +101,27 @@ __all__ = [
     "score_vector",
     # in-memory adapters
     "InMemoryAuditSink",
+    # entity resolution (Wave 2 / ER 5a, spec §7.4)
+    "NormalizedEntity",
+    "DefaultNormalizer",
+    "FeatureAgreement",
+    "IdentitySignal",
+    "SharedStrongIdentifierRule",
+    "CandidatePair",
+    "BlockingPipeline",
+    "ExactIdentifierChannel",
+    "NormalizedNameChannel",
+    "SourceKeyChannel",
+    "EmbeddingChannel",
+    "PairFeatures",
+    "DefaultFeatureExtractor",
+    "CalibrationKey",
+    "MatchResult",
+    "DeterministicRuleMatcher",
+    "CalibrationModel",
+    "CalibratedMatcher",
+    "LabeledPair",
+    "GoldenSet",
+    "CalibrationMetrics",
+    "evaluate",
 ]
