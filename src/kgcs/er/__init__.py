@@ -6,13 +6,15 @@ embeddings backend required. The four stages, each a small injectable port with
 a deterministic reference implementation:
 
     normalize → block → extract features → match (calibrated probability)
+        → validate cluster → deterministic policy gate
 
-Stages 5 (cluster validation) and 6 (the policy gate) are later waves and are
-deliberately absent. Nothing here merges entities: normalization produces
-canonical forms, identity rules emit explainable signals, blocking proposes
-recall-oriented candidate pairs, features are typed and honest-null, and the
-matcher returns a *calibrated probability* — never a merge decision, and never
-a fixed cosine threshold.
+Nothing here merges entities: normalization produces canonical forms, identity
+rules emit explainable signals, blocking proposes recall-oriented candidate
+pairs, features are typed and honest-null, the matcher returns a *calibrated
+probability* — never a merge decision, and never a fixed cosine threshold —
+cluster validation rejects invalid transitive closures (Wave 3, §7.4 step 5),
+and the deterministic policy gate (Wave 3, §7.4 step 6) chooses an `ErAction`
+with no LLM in the loop.
 """
 
 from kgcs.er.blocking import (
@@ -25,6 +27,22 @@ from kgcs.er.blocking import (
     PairProducer,
     SourceKeyChannel,
     VectorIndex,
+)
+from kgcs.er.cluster import (
+    Cluster,
+    ClusterConstraint,
+    ClusterSnapshot,
+    ClusterValidation,
+    ClusterValidator,
+    ConstraintResult,
+    IdentityAuthorityConstraint,
+    MutuallyExclusiveAttributeConstraint,
+    TemporalConsistencyConstraint,
+    TenantBoundaryConstraint,
+    UniqueSourceConstraint,
+    default_cluster_validator,
+    default_source_of,
+    select_survivor,
 )
 from kgcs.er.features import (
     FEATURE_KEYS,
@@ -64,6 +82,12 @@ from kgcs.er.normalize import (
     TypeHook,
     normalize_name,
     run_identity_rules,
+)
+from kgcs.er.resolution import (
+    ErAction,
+    ErDecision,
+    ErResolutionPolicy,
+    ErRoutingThresholds,
 )
 
 __all__ = [
@@ -113,4 +137,24 @@ __all__ = [
     "calibrate_logistic",
     "sigmoid",
     "linear_score",
+    # cluster validation (stage 5, §7.4 step 5)
+    "Cluster",
+    "ClusterSnapshot",
+    "ClusterConstraint",
+    "ConstraintResult",
+    "ClusterValidation",
+    "ClusterValidator",
+    "TemporalConsistencyConstraint",
+    "UniqueSourceConstraint",
+    "MutuallyExclusiveAttributeConstraint",
+    "TenantBoundaryConstraint",
+    "IdentityAuthorityConstraint",
+    "default_cluster_validator",
+    "default_source_of",
+    "select_survivor",
+    # deterministic policy gate (stage 6, §7.4 step 6)
+    "ErAction",
+    "ErDecision",
+    "ErResolutionPolicy",
+    "ErRoutingThresholds",
 ]

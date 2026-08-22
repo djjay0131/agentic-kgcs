@@ -33,6 +33,14 @@
   cosine-threshold decision. 146 pytest, ruff, strict mypy. Surfaced ADR
   candidates 0005–0008. Branch `wave2/er`, sibling of PR B off Wave-0 core.
 
+- 2026-08-22: Wave 3 (PR D) — cluster validation + deterministic ER resolution
+  policy + DG-5 curation profiles. `er/cluster.py`, `profiles.py`,
+  `er/resolution.py`. Completes the deterministic decision spine; enforces
+  Issue #2 reject-only/client-authoritative (law 13) at cluster + policy
+  layers; invalid transitive clusters blocked (law 7). 201 pytest, ruff,
+  strict mypy. ADR candidates 0009–0011. Branch `wave3/cluster-policy`,
+  stacked on Wave 2.
+
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →
 audit) reconciled onto v0.3, gates green, pending independent review + owner

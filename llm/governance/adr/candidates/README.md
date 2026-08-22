@@ -27,5 +27,9 @@ to a real ADR (here or in `agentic-kgis/docs/adr/`) is the owner's call.
 - [0006 — no canonical name for an entity embedding](0006-no-canonical-entity-embedding-slot.md)
 - [0007 — `EntityCandidate` carries no `valid_period`](0007-entity-candidate-has-no-valid-period.md)
 - [0008 — `CanonicalEntity` carries no scores](0008-canonical-entity-has-no-scores.md)
+- [0009 — no ER-decision/propose-link type in `kg_contracts`](0009-no-er-action-contract-type.md)
+- [0010 — `ClusterSnapshot` and `Precondition(cluster_version)` model the same check twice](0010-cluster-snapshot-vs-precondition.md)
+- [0011 — identity authority mode is not a first-class contract field](0011-identity-authority-not-first-class.md)
 
-0001–0004 surfaced in Wave 0 (deterministic core); 0005–0008 in Wave 2 (ER 5a).
+0001–0004 surfaced in Wave 0 (deterministic core); 0005–0008 in Wave 2 (ER 5a);
+0009–0011 in Wave 3 (cluster validation + resolution policy + profiles).

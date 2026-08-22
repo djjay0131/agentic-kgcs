@@ -12,7 +12,7 @@ founding decisions. Use `0000-template.md`.
 
 Open contract frictions surfaced during implementation live in
 [`candidates/`](candidates/README.md) as ADR *candidates* — inputs to a
-later governance review, not accepted decisions. There are eight, all still
+later governance review, not accepted decisions. There are eleven, all still
 open against current `kg_contracts`:
 
 - [0001 — `artifact` candidate has no curation operation type](candidates/0001-artifact-has-no-operation-type.md)
@@ -23,5 +23,8 @@ open against current `kg_contracts`:
 - [0006 — no canonical name for an entity embedding](candidates/0006-no-canonical-entity-embedding-slot.md)
 - [0007 — `EntityCandidate` carries no `valid_period`](candidates/0007-entity-candidate-has-no-valid-period.md)
 - [0008 — `CanonicalEntity` carries no scores](candidates/0008-canonical-entity-has-no-scores.md)
+- [0009 — no ER-decision/propose-link type in `kg_contracts`](candidates/0009-no-er-action-contract-type.md)
+- [0010 — `ClusterSnapshot` vs `Precondition(cluster_version)`](candidates/0010-cluster-snapshot-vs-precondition.md)
+- [0011 — identity authority mode is not a first-class contract field](candidates/0011-identity-authority-not-first-class.md)
 
-(0001–0004 from Wave 0; 0005–0008 from Wave 2.)
+(0001–0004 from Wave 0; 0005–0008 from Wave 2; 0009–0011 from Wave 3.)
