@@ -91,7 +91,22 @@ from kgcs.er import (
     select_survivor,
 )
 from kgcs.ids import DerivedIdFactory, IdFactory, UlidIdFactory, is_well_formed_graph_id
-from kgcs.memory import InMemoryAuditSink
+from kgcs.executor import (
+    DEFAULT_SUPPORTED_OPERATIONS,
+    INVERSE_OPERATION,
+    CompensationResult,
+    Compensator,
+    EpochPublisher,
+    ExecutionAuditSink,
+    ExecutionOutcome,
+    ExecutionRecord,
+    PlanExecutor,
+)
+from kgcs.memory import (
+    InMemoryAuditSink,
+    InMemoryEpochPublisher,
+    InMemoryExecutionAuditSink,
+)
 from kgcs.planner import (
     CurationPlanner,
     PlannedOperation,
@@ -158,7 +173,20 @@ __all__ = [
     "is_well_formed_graph_id",
     "score_vector",
     # in-memory adapters
+    # executor (write path, Wave 1)
+    "PlanExecutor",
+    "ExecutionOutcome",
+    "ExecutionRecord",
+    "ExecutionAuditSink",
+    "EpochPublisher",
+    "Compensator",
+    "CompensationResult",
+    "INVERSE_OPERATION",
+    "DEFAULT_SUPPORTED_OPERATIONS",
+    # in-memory adapters
     "InMemoryAuditSink",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
     # entity resolution (Wave 2 / ER 5a, spec §7.4)
     "NormalizedEntity",
     "DefaultNormalizer",
