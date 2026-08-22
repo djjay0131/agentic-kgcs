@@ -60,6 +60,13 @@
   decisions on the same plan path as auto — law 14; BacklogAnalyzer +
   BackpressureSignal; stdlib CLI). 363 pytest, ruff, strict mypy. ADR candidate
   0014. Branch `wave6/review-queue`, stacked on Wave 5.
+- 2026-08-22: Wave 7 (PR H) — semantic curation audit + replay + honest-null
+  evaluation + kg_eval seam. `src/kgcs/observability/` (SemanticAuditRecord —
+  third audit object joined by trace_id; replay reproduces decisions — law 17;
+  honest-null ER + curation metrics — law 9/ADR-0009; named comparison arms;
+  MetricProvider with no kg_eval reverse dep). 409 pytest, ruff, strict mypy.
+  No new ADR candidate (reuses 0002/0012). Branch `wave7/audit-eval`, stacked
+  on Wave 6.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →

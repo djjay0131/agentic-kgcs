@@ -1,5 +1,32 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 7, PR H): **Semantic curation audit + replay + honest-null
+evaluation + kg_eval seam.** On branch `wave7/audit-eval`, stacked on Wave 6. New
+package `src/kgcs/observability/` (the plan's "audit/" slot, renamed to avoid
+clashing with the Wave-0 `audit.py` module):
+- `semantic_audit.py` — `SemanticAuditRecord`: the THIRD audit object (decision-
+  scoped), distinct from `kg_contracts.AuditRecord` (operation) and
+  `ExecutionRecord` (execution), joined by `trace_id`/`plan_id` + compact refs.
+  Captures baseline decision + adviser provenance + review + final + plan_id +
+  score_vector + all versions. `SemanticAuditSink` + in-memory impl;
+  `SemanticAuditBuilder`. Realizes ADR candidates 0002/0012's "semantic audit
+  sink" by trace-join, no contract change.
+- `replay.py` — `replay()` re-runs a decision through the same
+  `CurationOrchestrator` (RecordedCompletionClient for the LLM arm) and reports
+  byte-identical reproduction or a divergence (law 17).
+- `metrics.py` — ER metrics (pairwise/cluster P/R, false-merge/split,
+  calibration error, abstention) + curation metrics (review yield/agreement,
+  rollback, queue age, time-to-canonicalization). Honest-null: insufficient
+  data → None+count, never fake 0/1 (law 9, ADR-0009).
+- `arms.py` — named comparison arms (baseline / calibrated / matcher+LLM;
+  MULTI_AGENT_DEBATE off unless enabled). `should_raise_threshold` refuses to
+  promote on anecdote (insufficient-evidence below min_samples).
+- `provider.py` — `MetricProvider` seam KGCS implements + kg_eval consumes; NO
+  `kg_eval` import (no reverse dep).
+Gates: 409 pytest (+45), ruff, strict mypy (48 files). No new ADR candidate
+(reuses 0002/0012). NEXT: Wave 8 — KGIS→KGCS end-to-end (flagship research-paper
+re-curation scenario) + a non-paper source shape.
+
 Update 2026-08-22 (Wave 6, PR G): **Review API/queue/CLI + backlog/backpressure.**
 On branch `wave6/review-queue`, stacked on Wave 5. New package `src/kgcs/review/`:
 - `queue.py` — `PersistentReviewQueue` (passes `ReviewQueueContract`; swappable
