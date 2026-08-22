@@ -1,7 +1,7 @@
 # Governance Delta: agentic-kgcs
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 Governance: agentic-governance v0.3
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
@@ -78,19 +78,22 @@ declared.
 - Governance directory: `llm/governance/`
 - ADR directory: `llm/governance/adr/`
 - Memory-bank path: `llm/memory_bank/`
+- Plans directory: `llm/plans/`
 - Artifacts directory (the data plane): `docs/`
 
 Not yet declared, because this repo has no such content today:
 constitution directory (role charters are canonical, not local), features
-directory, plans directory, and spec directory — the design authority is
-the sibling repo's shared spec. `CLAUDE.md` still routes new design specs
-to `llm/specs/` and new implementation plans to `llm/plans/`; declare
-those slots here when the first one is created.
+directory, and spec directory — the design authority is the sibling repo's
+shared spec. `CLAUDE.md` still routes new design specs to `llm/specs/`; declare
+that slot here when the first local spec is created.
 
 ## Roadmap
 
-Path: none (the plan sequence in the design spec §11 — in `agentic-kgis` —
-serves as the roadmap).
+Path: `llm/plans/2026-08-22-kgcs-v1-orchestrated-build.md`
+
+The shared design spec §11 remains the system-level milestone authority; this
+local roadmap decomposes the KGCS-owned implementation and its dependency-aware
+execution waves.
 
 ## Governance Check Command
 
