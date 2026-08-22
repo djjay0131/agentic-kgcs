@@ -48,6 +48,18 @@ from kgcs.advisers import (
 from kgcs.audit import AuditRecorder, AuditSink
 from kgcs.clock import Clock, FixedClock, SystemClock
 from kgcs.engine import CandidateOutcome, CurationEngine, EngineResult
+from kgcs.executor import (
+    DEFAULT_EXECUTED_BY,
+    DEFAULT_SUPPORTED_OPERATIONS,
+    INVERSE_OPERATION,
+    CompensationResult,
+    Compensator,
+    EpochPublisher,
+    ExecutionAuditSink,
+    ExecutionOutcome,
+    ExecutionRecord,
+    PlanExecutor,
+)
 from kgcs.er import (
     BlockingPipeline,
     CalibratedMatcher,
@@ -91,17 +103,6 @@ from kgcs.er import (
     select_survivor,
 )
 from kgcs.ids import DerivedIdFactory, IdFactory, UlidIdFactory, is_well_formed_graph_id
-from kgcs.executor import (
-    DEFAULT_SUPPORTED_OPERATIONS,
-    INVERSE_OPERATION,
-    CompensationResult,
-    Compensator,
-    EpochPublisher,
-    ExecutionAuditSink,
-    ExecutionOutcome,
-    ExecutionRecord,
-    PlanExecutor,
-)
 from kgcs.memory import (
     InMemoryAuditSink,
     InMemoryEpochPublisher,
@@ -114,6 +115,25 @@ from kgcs.planner import (
     ResolvedCandidate,
 )
 from kgcs.policy import ResolutionPolicy
+from kgcs.recuration import (
+    AssertionReassignment,
+    ConceptEvolutionPlanner,
+    CurationTrigger,
+    DependencyIndex,
+    EvolutionKind,
+    EvolutionResult,
+    IllegalOntologyTransition,
+    InMemoryDependencyIndex,
+    InMemoryTriggerQueue,
+    OntologyLifecycle,
+    OntologyPromotionRefused,
+    OntologyTerm,
+    OntologyTermState,
+    TriggerKind,
+    TriggerQueue,
+    VersionContext,
+    is_legal_transition,
+)
 from kgcs.profiles import (
     CurationProfile,
     ErMode,
@@ -172,17 +192,6 @@ __all__ = [
     "UlidIdFactory",
     "is_well_formed_graph_id",
     "score_vector",
-    # in-memory adapters
-    # executor (write path, Wave 1)
-    "PlanExecutor",
-    "ExecutionOutcome",
-    "ExecutionRecord",
-    "ExecutionAuditSink",
-    "EpochPublisher",
-    "Compensator",
-    "CompensationResult",
-    "INVERSE_OPERATION",
-    "DEFAULT_SUPPORTED_OPERATIONS",
     # in-memory adapters
     "InMemoryAuditSink",
     "InMemoryEpochPublisher",
@@ -268,4 +277,33 @@ __all__ = [
     "OntologyRecommendation",
     "CurationOrchestrator",
     "OrchestrationResult",
+    # transaction-aware executor + compensation (Wave 1 / Plan 3)
+    "PlanExecutor",
+    "ExecutionOutcome",
+    "ExecutionRecord",
+    "ExecutionAuditSink",
+    "EpochPublisher",
+    "DEFAULT_EXECUTED_BY",
+    "DEFAULT_SUPPORTED_OPERATIONS",
+    "Compensator",
+    "CompensationResult",
+    "INVERSE_OPERATION",
+    # re-curation + concept/ontology evolution (Wave 5 / DG-1 / DG-3)
+    "TriggerKind",
+    "VersionContext",
+    "CurationTrigger",
+    "TriggerQueue",
+    "InMemoryTriggerQueue",
+    "DependencyIndex",
+    "InMemoryDependencyIndex",
+    "EvolutionKind",
+    "AssertionReassignment",
+    "EvolutionResult",
+    "ConceptEvolutionPlanner",
+    "OntologyTermState",
+    "OntologyTerm",
+    "OntologyLifecycle",
+    "IllegalOntologyTransition",
+    "OntologyPromotionRefused",
+    "is_legal_transition",
 ]

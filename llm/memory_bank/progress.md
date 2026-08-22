@@ -47,6 +47,13 @@
   graph (law 16), the deterministic baseline survives every LLM failure (law
   1), advice never overrides reject-only (law 13). 254 pytest, ruff, strict
   mypy. ADR candidate 0012. Branch `wave4/llm-advisers`, stacked on Wave 3.
+- 2026-08-22: Wave 5 (PR F) — evidence-driven re-curation (DG-1) +
+  concept/ontology evolution (DG-3). `src/kgcs/recuration/` (triggers,
+  targeting, evolution, ontology). Triggers enqueue-only (never mutate);
+  targeting incremental (law 11); supersession bitemporal, never deletes (law
+  10); evolution ops compensable (law 8); ontology promotion gated (law 12).
+  333 pytest, ruff, strict mypy. ADR candidate 0013. PR F based on
+  `integration/pre-recuration` (Wave 1 ⊕ Wave 4), diff recuration-only.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →

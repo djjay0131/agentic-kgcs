@@ -1,5 +1,29 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 5, PR F): **Evidence-driven re-curation (DG-1) +
+concept/ontology evolution (DG-3).** On branch `wave5/recuration`. New package
+`src/kgcs/recuration/`:
+- `triggers.py` — `CurationTrigger` (6 `TriggerKind`s; content-addressed
+  trigger_id) + `TriggerQueue`/`InMemoryTriggerQueue` (idempotent enqueue;
+  holds no canonical writer — triggers enqueue work, never mutate).
+- `targeting.py` — `DependencyIndex`/`InMemoryDependencyIndex`: "what could this
+  evidence affect?" via keyed lookups → targeted/incremental re-curation, no
+  full scan (law 11).
+- `evolution.py` — `ConceptEvolutionPlanner`: turns an evolution decision +
+  trigger into a compensable `CurationPlan`. Supersession marks the old
+  assertion SUPERSEDED (bitemporal, still queryable) — never deletes (law 10);
+  merge uses `select_survivor` + reversible lineage; split reassigns explicitly;
+  unresolved conflict preserves both via an UNRESOLVED `ConflictRecord`. Every
+  op traces to trigger_id + evidence_ids + versions.
+- `ontology.py` — `OntologyLifecycle` (PROPOSED→APPROVED→OBSERVED→DEPRECATED);
+  promotion refused for non-APPROVED terms; skipping governance is
+  unconstructable (law 12).
+Branch-topology note: Wave 5 depends on BOTH the executor (Wave 1) and advisers
+(Wave 4), which were sibling branches; PR F is therefore based on an integration
+branch (`integration/pre-recuration` = Wave 1 ⊕ Wave 4) so its diff is
+recuration-only. Gates: 333 pytest, ruff, strict mypy (36 files). ADR candidate
+0013. NEXT: Wave 6 — review API/queue/CLI + backlog/backpressure.
+
 Update 2026-08-22 (Wave 4, PR E): **Bounded LLM curation orchestrator +
 specialist advisers.** On branch `wave4/llm-advisers`, stacked on Wave 3. New
 package `src/kgcs/advisers/`:
