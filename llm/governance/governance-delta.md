@@ -1,8 +1,8 @@
 # Governance Delta: agentic-kgcs
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
-Last updated: 2026-08-21
-Governance: agentic-governance v0.3
+Last updated: 2026-09-10
+Governance: agentic-governance v0.5
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -82,10 +82,23 @@ declared.
 
 Not yet declared, because this repo has no such content today:
 constitution directory (role charters are canonical, not local), features
-directory, plans directory, and spec directory — the design authority is
-the sibling repo's shared spec. `CLAUDE.md` still routes new design specs
-to `llm/specs/` and new implementation plans to `llm/plans/`; declare
-those slots here when the first one is created.
+directory, plans directory, spec directory, and **sprints directory** — the
+design authority is the sibling repo's shared spec. `CLAUDE.md` still routes
+new design specs to `llm/specs/` and new implementation plans to
+`llm/plans/`; declare those slots here when the first one is created.
+
+The sprints slot became declarable in agentic-governance v0.5.0. This repo
+executes dependency-ordered *waves* against the shared design spec rather
+than time-boxed sprints, so it has no sprint content and the slot stays
+absent. An absent slot is not a violation; declaring a path that nothing
+occupies is.
+
+`llm/plans/` is deliberately undeclared **and** currently empty. The plan
+that occupied it was written directly to `main`, bypassing issue → branch →
+PR, and was reverted in #8. Declaring the slot while the directory is empty
+is precisely the failure this repo hit: `FAIL layout — plans declared as
+"llm/plans", which does not exist`. The slot gets declared by the PR that
+lands the next plan, not before it.
 
 ## Roadmap
 
