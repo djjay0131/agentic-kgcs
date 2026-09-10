@@ -2,7 +2,7 @@
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
 Last updated: 2026-09-10
-Governance: agentic-governance v0.5
+Governance: agentic-governance v0.6
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
