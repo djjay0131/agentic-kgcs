@@ -31,7 +31,7 @@ jobs:
     env:
       GOVERNANCE_REPO: djjay0131/agentic-governance
       # agentic-governance v0.3.0
-      GOVERNANCE_REF: 2f0046e36d6c87044819d0299b745e3b5b162a32
+      GOVERNANCE_REF: 4c4f4170b3f05c172f14651e0fb1c26904cd66e9
     steps:
       - name: Check out repo (full history so origin/main exists for the diff)
         uses: actions/checkout@v4
