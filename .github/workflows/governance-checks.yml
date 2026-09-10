@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOVERNANCE_REPO: djjay0131/agentic-governance
-      # agentic-governance v0.6.0
-      GOVERNANCE_REF: b2dda1efcc715bfe7eaaf7111e5685bcbdaeb177
+      # agentic-governance v0.6.1
+      GOVERNANCE_REF: 195a23afe7ecc1603b30fbfdd4a70219882b8a24
     steps:
       - name: Check out repo (full history so origin/main exists for the diff)
         uses: actions/checkout@v4
