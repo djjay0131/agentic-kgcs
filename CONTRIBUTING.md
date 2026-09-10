@@ -9,7 +9,7 @@ This project follows [agentic-governance](https://github.com/djjay0131/agentic-g
 ## Before You Start
 
 1. `llm/memory_bank/activeContext.md`
-2. Design authority: `agentic-kgis/docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+2. Design authority: `agentic-kgis/llm/specs/2026-07-09-kgis-kgcs-design.md`
 3. `llm/governance/governance-delta.md`
 4. agentic-governance: `llm/governance/architecture-governance.md`,
    `llm/governance/project-operating-system.md`

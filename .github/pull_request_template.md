@@ -14,7 +14,7 @@ Why now?
 
 ## Related Docs / ADRs
 
-- Design spec: agentic-kgis/docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md
+- Design spec: agentic-kgis/llm/specs/2026-07-09-kgis-kgcs-design.md
 - ADRs:
 
 ## Memory-Bank Updates

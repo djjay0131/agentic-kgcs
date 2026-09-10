@@ -22,7 +22,7 @@ It depends only on `kg_contracts` from `agentic-kgis`.
 
 ## Design-Authority Document
 
-`agentic-kgis/docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+`agentic-kgis/llm/specs/2026-07-09-kgis-kgcs-design.md`
 (the shared KGIS/KGCS design spec lives in the sibling repo).
 
 **Cross-repo path, not yet migrated.** This is `agentic-kgis`'s current
