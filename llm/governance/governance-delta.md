@@ -2,7 +2,7 @@
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
 Last updated: 2026-09-10
-Governance: agentic-governance v0.6
+Governance: agentic-governance v0.7
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -105,11 +105,39 @@ lands the next plan, not before it.
 Path: none (the plan sequence in the design spec §11 — in `agentic-kgis` —
 serves as the roadmap).
 
+## Canon Location
+
+Where the canonical `agentic-governance` repo lives, declared once. **This is
+the only machine-specific path this repo is permitted to contain** — every
+canon citation in `CLAUDE.md`, `AGENTS.md` and the check command below resolves
+against it, so it changes in one place instead of a dozen.
+
+- Canon checkout: `~/code/agentic-governance`
+- Canon repository: `https://github.com/djjay0131/agentic-governance`
+- Plugin registered: `repo` (`.claude/settings.json`)
+
+Skills and agents running as the installed plugin resolve canon from
+`${CLAUDE_PLUGIN_ROOT}/..` and need none of this; the declaration exists for
+everything that is read *without* the plugin loaded — static instructions in
+`CLAUDE.md`, and a check command run from a plain shell.
+
+**Deliberately not verified by `--layout`.** A canon checkout is
+environment-specific: CI fetches canon into a runner temp directory and has no
+such path, so asserting it would fail every CI run for a repo whose local
+declaration is perfectly correct. Verify it yourself when you change it —
+`ls <canon checkout>/VERSION`.
+
 ## Governance Check Command
 
-`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`
-(canonical script from the agentic-governance checkout. `--layout` must be
-in the recorded command, not run only at onboarding.)
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/governance-checks.mjs" --layout` when the
+governance plugin is loaded — preferred, because it needs no declared path.
+From a plain shell, resolved against the `Canon checkout` declared in
+§Canon Location above:
+`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`.
+Never a bare machine path anywhere else: both forms reach canon through the
+single declaration above.
+
+`--layout` must be in the recorded command, not run only at onboarding.
 
 CI wiring: **live** via `.github/workflows/governance-checks.yml` (runs on
 every PR and on pushes to `main`). Because the canonical script lives
