@@ -144,8 +144,10 @@ CI wiring: **live** via `.github/workflows/governance-checks.yml` (runs on
 every PR and on pushes to `main`). Because the canonical script lives
 outside this repo, the workflow fetches agentic-governance pinned to a
 commit SHA, kept in sync with the governance version above. Not yet a
-*required* status check — branch protection is unavailable on this repo's
-plan (see Platform Enforcement Reality).
+*required* status check: branch protection on `main` **is** live as of
+2026-09-10, but its only required context is `test`; adding
+`governance-checks` is an owner settings change (see Platform Enforcement
+Reality).
 
 ## L0 Path Allowlist
 
@@ -166,15 +168,55 @@ deny llm/governance/adr/0000-template.md
 
 ## Platform Enforcement Reality
 
-- Branch protection on `main`: unavailable (private repo, free plan —
-  verified via `gh api` 403 on 2026-07-09). Merge discipline is
-  convention-enforced.
-- Required status checks: unavailable (same constraint).
-- Token/identity model: all agent sessions authenticate with the owner's
+Re-verified against the GitHub API on 2026-09-10 via
+`gh api repos/djjay0131/agentic-kgcs/branches/main/protection`, not assumed.
+The prior revision recorded a 2026-07-09 free-plan 403 and concluded that
+branch protection was unavailable; the repo is now public, that 403 is gone,
+and protection is live. This section records the response, not the intent.
+
+- **Branch protection on `main`: configured.** Pull requests are required,
+  force pushes are blocked (`allow_force_pushes: false`), branch deletion is
+  blocked (`allow_deletions: false`), conversation resolution is required
+  (`required_conversation_resolution: true`), and stale reviews dismiss on a
+  new push (`dismiss_stale_reviews: true`). The Issue → Branch → Draft PR →
+  Review → Merge flow is no longer convention-only: the platform now
+  refuses a direct push to `main`.
+- **Required status checks: enabled, one context.** `test` — the `test` job
+  of `.github/workflows/ci.yml`, supplied by GitHub Actions — with
+  `strict: true`, so a PR must be up to date with `main` before it can
+  merge. This is the one gate genuinely enforced by the platform rather than
+  by convention: a PR whose `test` job fails cannot be merged.
+- **Convention-only, despite the above.** What the platform is configured
+  *not* to enforce:
+  - `required_approving_review_count` is **0** — a PR is required, an
+    approval is not. Review remains a procedural commitment.
+  - `enforce_admins` is **off** — the owner (an admin) can bypass the
+    required `test` check. The gate binds agents and ordinary flow; it does
+    not bind the owner.
+  - The `governance-checks` job of `.github/workflows/governance-checks.yml`
+    is **not** a required context. It runs on every PR and its result is
+    visible, but a red governance check does not block a merge. Only `test`
+    does.
+  - Also off, and deliberately unremarkable here: `required_signatures`,
+    `required_linear_history` (merges are squashed by practice, not by
+    rule), and `require_code_owner_reviews`.
+- **Token/identity model:** all agent sessions authenticate with the owner's
   token — steward/auditor/architect are procedural roles, not distinct
-  identities; independence is temporal/artifactual.
-- Hardening path: GitHub Pro or public visibility would enable branch
-  protection and required checks; blocked on owner's plan decision.
+  identities; independence is temporal/artifactual. The platform cannot tell
+  them apart, so no amount of branch protection makes role separation real
+  here.
+- **Hardening path — what remains.** All three are owner settings changes,
+  not repo changes:
+  - Add `governance-checks` to the required contexts. The cheapest real
+    gain: the workflow already runs, and requiring it would make the
+    governance checks binding instead of advisory. Likeliest next step.
+  - `enforce_admins` → on. Makes the required checks bind the owner too.
+    Not taken because it also closes the owner's emergency path on a
+    single-maintainer repo.
+  - `required_approving_review_count` → 1. **Blocked, not deferred.** A
+    single-maintainer repo cannot supply a second approver, so a required
+    review would deadlock every PR until a second human or a distinct
+    steward machine account exists.
 
 ## Steward Activation Status
 
