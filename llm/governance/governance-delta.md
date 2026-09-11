@@ -131,11 +131,12 @@ declaration is perfectly correct. Verify it yourself when you change it —
 
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/governance-checks.mjs" --layout` when the
 governance plugin is loaded — preferred, because it needs no declared path.
-From a plain shell, resolved against the `Canon checkout` declared in
-§Canon Location above:
-`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`.
-Never a bare machine path anywhere else: both forms reach canon through the
-single declaration above.
+From a plain shell, the same script — `plugin/scripts/governance-checks.mjs
+--layout` — under the `Canon checkout` declared in §Canon Location above. The
+checkout path is deliberately **not** expanded here: the machine-specific value
+must appear in exactly one place per repo, and twenty lines below the
+declaration is still a second place. Both forms reach canon through that single
+declaration.
 
 `--layout` must be in the recorded command, not run only at onboarding.
 
