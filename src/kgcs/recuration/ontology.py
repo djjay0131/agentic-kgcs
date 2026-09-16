@@ -32,8 +32,6 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from kg_contracts.candidates import OntologyCandidate
 from kg_contracts.curation import (
     CurationOperation,
@@ -41,6 +39,7 @@ from kg_contracts.curation import (
     CurationPlan,
     Precondition,
 )
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kgcs.ids import DerivedIdFactory, IdFactory
 from kgcs.planner import DEFAULT_POLICY_VERSION, SNAPSHOT_PRECONDITION_KIND

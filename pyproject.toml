@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = ["agentic-kgis>=0.2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.10"]
+dev = ["pytest>=8.0", "ruff==0.16.4", "mypy>=1.10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kgcs"]
@@ -21,6 +21,15 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Rule set pinned explicitly (ruff is pinned in dev deps) so CI and local
+# never drift: the prior E/F defaults plus I (import sorting). Broader 0.16
+# default families (UP/RUF/PERF/DTZ/B) are a deliberate future opt-in.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kgcs", "helpers", "e2e_harness", "conftest"]
 
 [tool.mypy]
 python_version = "3.11"
