@@ -1,8 +1,8 @@
 # Governance Delta: agentic-kgcs
 
 Status: Approved (amended per external design review, agentic-kgis PR #1)
-Last updated: 2026-09-10
-Governance: agentic-governance v0.8
+Last updated: 2026-09-16
+Governance: agentic-governance v0.9
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -200,6 +200,17 @@ and protection is live. This section records the response, not the intent.
   - Also off, and deliberately unremarkable here: `required_signatures`,
     `required_linear_history` (merges are squashed by practice, not by
     rule), and `require_code_owner_reviews`.
+- **Branch cleanup: `delete_branch_on_merge` is `true`.** Verified
+  2026-09-16 via `gh api repos/djjay0131/agentic-kgcs -q
+  .delete_branch_on_merge` — a different endpoint from the protection call
+  above, because this is a **repository** setting rather than branch
+  protection. That distinction is why it is available on every plan,
+  including the private-repo-on-a-free-plan case where the protection call
+  403s — the case this repo was actually in on 2026-07-09. It makes the PR
+  lifecycle's closing clause ("Branch deleted post-merge") a platform fact
+  instead of a flag whoever merges has to remember; canon states the
+  default in agentic-governance `llm/governance/branch-protection.md`
+  §Branch Cleanup (v0.9.0).
 - **Token/identity model:** all agent sessions authenticate with the owner's
   token — steward/auditor/architect are procedural roles, not distinct
   identities; independence is temporal/artifactual. The platform cannot tell
