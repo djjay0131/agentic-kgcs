@@ -8,12 +8,12 @@ against the reference store fails explicitly rather than crashing.
 from datetime import UTC, datetime
 
 import pytest
-from helpers import GRAPH_ID
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.curation import CurationOperation, CurationOperationType, CurationPlan
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 from kg_contracts.testing.memory import MemoryGraphStore
 
+from helpers import GRAPH_ID
 from kgcs import (
     Compensator,
     CurationEngine,

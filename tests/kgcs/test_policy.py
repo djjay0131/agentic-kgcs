@@ -9,9 +9,8 @@ from kg_contracts.testing.factories import (
     make_scores,
 )
 
-from kgcs import ResolutionPolicy
-
 from helpers import GRAPH_ID, known_identity
+from kgcs import ResolutionPolicy
 
 
 def _policy() -> ResolutionPolicy:

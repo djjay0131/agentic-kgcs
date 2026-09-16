@@ -15,10 +15,17 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from e2e_harness import REGISTRY_CONFIDENCE_POLICY, entity_candidate
 from kg_contracts.identity import IdentityLinkKind
 from kg_contracts.testing.factories import make_entity_candidate, make_scores
 from kg_contracts.testing.memory import MemoryGraphStore
+
+from e2e_harness import PAPER_SHAPE, REGISTRY_CONFIDENCE_POLICY, entity_candidate
+from kgcs import (
+    CurationEngine,
+    ExecutionOutcome,
+    FixedClock,
+    PlanExecutor,
+)
 from kgcs.advisers.completion import CompletionResponse, RecordedCompletionClient
 from kgcs.advisers.orchestrator import CurationOrchestrator, _identity_question
 from kgcs.advisers.specialists import IdentityAdviser
@@ -26,14 +33,6 @@ from kgcs.er.blocking import CandidatePair
 from kgcs.er.matcher import CalibrationKey, MatchResult
 from kgcs.er.resolution import ErAction, ErResolutionPolicy
 from kgcs.profiles import client_authoritative_profile, default_profile
-
-from e2e_harness import PAPER_SHAPE
-from kgcs import (
-    CurationEngine,
-    ExecutionOutcome,
-    FixedClock,
-    PlanExecutor,
-)
 
 GRAPH = "client"
 _CLOCK = FixedClock(datetime(2026, 8, 22, tzinfo=UTC))

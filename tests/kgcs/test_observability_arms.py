@@ -10,10 +10,10 @@ evidence" on thin data — no threshold is ever raised on anecdotal success.
 from kgcs.er.blocking import CandidatePair
 from kgcs.er.features import PairFeatures
 from kgcs.er.matcher import (
+    CalibratedMatcher,
     CalibrationEntry,
     CalibrationKey,
     CalibrationMetrics,
-    CalibratedMatcher,
     CalibrationModel,
     DeterministicRuleMatcher,
     GoldenSet,

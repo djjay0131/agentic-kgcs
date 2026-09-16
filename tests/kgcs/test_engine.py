@@ -6,6 +6,7 @@ from kg_contracts.candidates import Candidate, CandidateScores
 from kg_contracts.curation import ResolutionDecision
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 
+from helpers import GRAPH_ID, known_identity
 from kgcs import (
     AuditRecorder,
     CurationEngine,
@@ -15,8 +16,6 @@ from kgcs import (
     ResolutionPolicy,
     default_validator,
 )
-
-from helpers import GRAPH_ID, known_identity
 
 
 class _SpyPolicy(ResolutionPolicy):

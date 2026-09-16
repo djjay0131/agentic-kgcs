@@ -25,9 +25,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from kg_contracts.curation import ReviewAction, ReviewDecision
 from pydantic import BaseModel, ConfigDict
 
-from kg_contracts.curation import ReviewAction, ReviewDecision
 from kgcs.er.matcher import CalibrationMetrics, GoldenSet, Matcher, evaluate
 from kgcs.executor.executor import ExecutionRecord
 from kgcs.observability.semantic_audit import SemanticAuditRecord

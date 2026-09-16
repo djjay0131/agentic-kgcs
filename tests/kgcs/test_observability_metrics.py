@@ -10,6 +10,7 @@ denominators, and the curation metrics are pure functions of their inputs.
 from datetime import UTC, datetime
 
 from kg_contracts.curation import ReviewAction, ReviewDecision
+
 from kgcs.er.blocking import CandidatePair
 from kgcs.er.features import PairFeatures
 from kgcs.er.matcher import (

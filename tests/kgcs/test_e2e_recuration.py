@@ -26,6 +26,13 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from kg_contracts.assertions import Assertion, ConflictStatus, CurationStatus
+from kg_contracts.curation import CurationOperationType, ReviewAction, ReviewDecision
+from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+from kg_contracts.identity import new_identity_id
+from kg_contracts.stores import GraphReadOptions
+from kg_contracts.testing.factories import make_assertion
+
 from e2e_harness import (
     PAPER_SHAPE,
     REGISTRY_CONFIDENCE_POLICY,
@@ -37,11 +44,14 @@ from e2e_harness import (
     entity_candidate,
     new_assertion,
 )
-from kg_contracts.assertions import Assertion, ConflictStatus, CurationStatus
-from kg_contracts.curation import CurationOperationType, ReviewAction, ReviewDecision
-from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
-from kg_contracts.stores import GraphReadOptions
-from kg_contracts.testing.factories import make_assertion
+from kgcs import (
+    Compensator,
+    CurationEngine,
+    ExecutionOutcome,
+    FixedClock,
+    InMemoryEpochPublisher,
+    PlanExecutor,
+)
 from kgcs.advisers.base import AdviserAssessment, AdviserQuestion
 from kgcs.advisers.completion import (
     CompletionResponse,
@@ -49,7 +59,6 @@ from kgcs.advisers.completion import (
     RecordedCompletionClient,
 )
 from kgcs.advisers.specialists import AssertionAdviser, AssertionRecommendation
-from kg_contracts.identity import new_identity_id
 from kgcs.recuration import (
     ConceptEvolutionPlanner,
     CurationTrigger,
@@ -59,15 +68,6 @@ from kgcs.recuration import (
     TriggerKind,
 )
 from kgcs.review.operations import ReviewOutcomeStatus, ReviewProposal, ReviewRouter
-
-from kgcs import (
-    Compensator,
-    CurationEngine,
-    ExecutionOutcome,
-    FixedClock,
-    InMemoryEpochPublisher,
-    PlanExecutor,
-)
 
 _CLOCK = FixedClock(datetime(2026, 8, 22, tzinfo=UTC))
 _SHAPES = [PAPER_SHAPE, SENSOR_SHAPE]

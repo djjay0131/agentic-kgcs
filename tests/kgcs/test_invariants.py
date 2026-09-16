@@ -3,13 +3,12 @@
 from datetime import UTC, datetime
 
 from kg_contracts.candidates import CandidateScores
-from kg_contracts.curation import CurationPlan
+from kg_contracts.curation import CurationOperationType, CurationPlan
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 from kg_contracts.testing.memory import MemoryGraphStore
 
-from kg_contracts.curation import CurationOperationType
-
+from helpers import GRAPH_ID, known_identity
 from kgcs import (
     Compensator,
     CurationEngine,
@@ -17,8 +16,6 @@ from kgcs import (
     FixedClock,
     PlanExecutor,
 )
-
-from helpers import GRAPH_ID, known_identity
 
 
 def _batch(auto_scores: CandidateScores) -> list:

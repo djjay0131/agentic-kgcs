@@ -52,8 +52,6 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
-
 from kg_contracts.curation import CurationOperationType, CurationPlan, Precondition
 from kg_contracts.stores import (
     CommitResult,
@@ -61,6 +59,7 @@ from kg_contracts.stores import (
     GraphMutationStore,
     GraphReader,
 )
+from pydantic import BaseModel, ConfigDict
 
 from kgcs.clock import Clock, SystemClock
 from kgcs.ids import DerivedIdFactory, IdFactory

@@ -23,12 +23,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from e2e_harness import (
-    REGISTRY_CONFIDENCE_POLICY,
-    SENSOR_SHAPE,
-    attribute_candidate,
-    entity_candidate,
-)
 from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
 from kgis import (
     AttributeCandidateBuilder,
@@ -43,12 +37,20 @@ from kgis import (
     SourceScoring,
 )
 
+from e2e_harness import (
+    REGISTRY_CONFIDENCE_POLICY,
+    SENSOR_SHAPE,
+    attribute_candidate,
+    entity_candidate,
+)
 from kgcs import (
     CurationEngine,
     ExecutionOutcome,
-    FixedClock as KgcsFixedClock,
     InMemoryEpochPublisher,
     PlanExecutor,
+)
+from kgcs import (
+    FixedClock as KgcsFixedClock,
 )
 
 GRAPH = "roster"

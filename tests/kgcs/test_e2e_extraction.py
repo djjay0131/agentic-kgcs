@@ -20,8 +20,15 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from e2e_harness import REGISTRY_CONFIDENCE_POLICY, entity_candidate
 from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
+
+from e2e_harness import PAPER_SHAPE, REGISTRY_CONFIDENCE_POLICY, entity_candidate
+from kgcs import (
+    CurationEngine,
+    ExecutionOutcome,
+    FixedClock,
+    PlanExecutor,
+)
 from kgcs.advisers.completion import (
     CompletionResponse,
     FailingCompletionClient,
@@ -34,14 +41,6 @@ from kgcs.er.matcher import CalibrationKey, MatchResult
 from kgcs.er.resolution import ErAction, ErResolutionPolicy
 from kgcs.observability import ReplayInputs, SemanticAuditBuilder, replay
 from kgcs.profiles import default_profile
-
-from kgcs import (
-    CurationEngine,
-    ExecutionOutcome,
-    FixedClock,
-    PlanExecutor,
-)
-from e2e_harness import PAPER_SHAPE
 
 GRAPH = "papers"
 _TRACE = "trace-doc-extraction"

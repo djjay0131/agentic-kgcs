@@ -18,6 +18,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from kg_contracts.curation import CurationOperationType, Precondition
+from kg_contracts.stores import GraphReadOptions
+from kg_contracts.testing.memory import MemoryGraphStore
+
 from e2e_harness import (
     PAPER_SHAPE,
     REGISTRY_CONFIDENCE_POLICY,
@@ -27,12 +31,6 @@ from e2e_harness import (
     attribute_candidate,
     entity_candidate,
 )
-from kg_contracts.curation import CurationOperationType, Precondition
-from kg_contracts.stores import GraphReadOptions
-from kg_contracts.testing.memory import MemoryGraphStore
-from kgcs.planner import SNAPSHOT_PRECONDITION_KIND
-from kgcs.recuration import ConceptEvolutionPlanner, CurationTrigger, TriggerKind
-
 from kgcs import (
     Compensator,
     CurationEngine,
@@ -40,6 +38,8 @@ from kgcs import (
     FixedClock,
     PlanExecutor,
 )
+from kgcs.planner import SNAPSHOT_PRECONDITION_KIND
+from kgcs.recuration import ConceptEvolutionPlanner, CurationTrigger, TriggerKind
 
 _CLOCK = FixedClock(datetime(2026, 8, 22, tzinfo=UTC))
 
