@@ -17,9 +17,8 @@ from kg_contracts.testing.factories import (
 )
 from kg_contracts.testing.memory import MemoryGraphStore
 
-from kgcs import CurationPlanner, ResolutionPolicy, ResolvedCandidate
-
 from helpers import GRAPH_ID, known_identity
+from kgcs import CurationPlanner, ResolutionPolicy, ResolvedCandidate
 
 
 def _resolve(candidates: Sequence[Candidate]) -> list[ResolvedCandidate]:

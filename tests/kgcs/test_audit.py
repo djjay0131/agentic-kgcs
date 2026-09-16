@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.testing.factories import make_entity_candidate
 
+from helpers import GRAPH_ID
 from kgcs import (
     AuditRecorder,
     AuditSink,
@@ -16,8 +17,6 @@ from kgcs import (
     ResolvedCandidate,
 )
 from kgcs.testing import AuditSinkContract
-
-from helpers import GRAPH_ID
 
 
 def _planned(scores: CandidateScores, n: int) -> tuple:
