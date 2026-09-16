@@ -48,18 +48,6 @@ from kgcs.advisers import (
 from kgcs.audit import AuditRecorder, AuditSink
 from kgcs.clock import Clock, FixedClock, SystemClock
 from kgcs.engine import CandidateOutcome, CurationEngine, EngineResult
-from kgcs.executor import (
-    DEFAULT_EXECUTED_BY,
-    DEFAULT_SUPPORTED_OPERATIONS,
-    INVERSE_OPERATION,
-    CompensationResult,
-    Compensator,
-    EpochPublisher,
-    ExecutionAuditSink,
-    ExecutionOutcome,
-    ExecutionRecord,
-    PlanExecutor,
-)
 from kgcs.er import (
     BlockingPipeline,
     CalibratedMatcher,
@@ -102,6 +90,18 @@ from kgcs.er import (
     evaluate,
     select_survivor,
 )
+from kgcs.executor import (
+    DEFAULT_EXECUTED_BY,
+    DEFAULT_SUPPORTED_OPERATIONS,
+    INVERSE_OPERATION,
+    CompensationResult,
+    Compensator,
+    EpochPublisher,
+    ExecutionAuditSink,
+    ExecutionOutcome,
+    ExecutionRecord,
+    PlanExecutor,
+)
 from kgcs.ids import DerivedIdFactory, IdFactory, UlidIdFactory, is_well_formed_graph_id
 from kgcs.memory import (
     InMemoryAuditSink,
@@ -115,6 +115,18 @@ from kgcs.planner import (
     ResolvedCandidate,
 )
 from kgcs.policy import ResolutionPolicy
+from kgcs.profiles import (
+    CurationProfile,
+    ErMode,
+    FalseMergeCostClass,
+    IdentityAuthorityMode,
+    ProfileRegistry,
+    ProfileScope,
+    client_authoritative_profile,
+    default_profile,
+    default_registry,
+    projection_consumer_profile,
+)
 from kgcs.recuration import (
     AssertionReassignment,
     ConceptEvolutionPlanner,
@@ -133,18 +145,6 @@ from kgcs.recuration import (
     TriggerQueue,
     VersionContext,
     is_legal_transition,
-)
-from kgcs.profiles import (
-    CurationProfile,
-    ErMode,
-    FalseMergeCostClass,
-    IdentityAuthorityMode,
-    ProfileRegistry,
-    ProfileScope,
-    client_authoritative_profile,
-    default_profile,
-    default_registry,
-    projection_consumer_profile,
 )
 from kgcs.review import (
     BacklogAnalyzer,
