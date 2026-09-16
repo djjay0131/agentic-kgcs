@@ -8,9 +8,8 @@ from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 from kg_contracts.testing.memory import MemoryGraphStore
 
-from kgcs import CurationEngine, FixedClock
-
 from helpers import GRAPH_ID, known_identity
+from kgcs import CurationEngine, FixedClock
 
 
 def _batch(auto_scores: CandidateScores) -> list:

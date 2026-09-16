@@ -8,10 +8,10 @@ engine whose plans and audit records are byte-reproducible.
 from datetime import UTC, datetime
 
 import pytest
-from helpers import GRAPH_ID
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.testing.factories import make_scores
 
+from helpers import GRAPH_ID
 from kgcs import CurationEngine, FixedClock
 
 
