@@ -5,6 +5,7 @@ a term that skipped approval is unconstructable; a PROMOTE_ONTOLOGY_TERM plan is
 refused for any non-APPROVED term and is (correctly) declared non-compensable."""
 
 import pytest
+from kg_contracts.candidates import OntologyCandidate
 from kg_contracts.curation import CurationOperationType
 from kg_contracts.testing.factories import make_scores
 from pydantic import ValidationError
@@ -20,7 +21,6 @@ from kgcs.recuration import (
     TriggerKind,
     is_legal_transition,
 )
-from kg_contracts.candidates import OntologyCandidate
 
 
 def _lifecycle() -> OntologyLifecycle:
