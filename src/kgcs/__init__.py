@@ -306,4 +306,6 @@ __all__ = [
     "IllegalOntologyTransition",
     "OntologyPromotionRefused",
     "is_legal_transition",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
 ]
