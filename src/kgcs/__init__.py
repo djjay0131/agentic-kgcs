@@ -1,20 +1,29 @@
-"""kgcs: the deterministic Knowledge Graph Curation core (Sprint 1).
+"""kgcs: the Knowledge Graph Curation Service — deterministic core + executor.
 
-The first curation engine: it begins at the `Candidate` boundary and produces
-a complete, immutable `CurationPlan` plus its `ValidationDecision`s,
-`ResolutionDecision`s, and `AuditRecord`s — and stops there. Nothing is
-written to the graph, no entity resolution runs, and there are no embeddings,
-LLMs, or probabilistic behavior. Every output is a pure function of the input
-candidates and the injected `IdFactory` (the audit stream additionally of the
-injected `Clock`), so identical input yields an identical plan.
+The curation library behind every portfolio knowledge graph. Two halves:
 
-    Candidate → Validator → Policy → Planner → Audit
+- a **deterministic core** (`validation`, `policy`, `planner`, `audit`, wired
+  by `engine`) that begins at the `Candidate` boundary and produces a
+  complete, immutable `CurationPlan` plus its `ValidationDecision`s,
+  `ResolutionDecision`s, and `AuditRecord`s — and stops there. No graph
+  mutation, no entity resolution, no embeddings/LLMs. Every output is a pure
+  function of the input candidates and the injected `IdFactory` (the audit
+  stream additionally of the injected `Clock`), so identical input yields an
+  identical plan.
+- a **transaction-aware executor** (`executor`) — the *only* component that
+  applies a `CurationPlan` to a `GraphMutationStore`. It checks preconditions,
+  rejects stale plans, publishes the curation epoch, fails explicitly on
+  operations an adapter cannot apply, records execution audit, and generates
+  compensating plans for rollback. Applications never hold a write surface.
 
-The stages are the modules `validation`, `policy`, `planner`, `audit`, wired
-by `engine`. `CurationEngine.create(...)` assembles a coherent default; the
-determinism primitives (`clock`, `ids`, `scores`) and the in-memory
-`AuditSink` (`memory`) are the injectable seams. Contracts themselves live in
-`kg_contracts` (frozen); this package only orchestrates over them.
+    Candidate → Validator → Policy → Planner → Audit → CurationPlan
+                                                            ↓
+                                          Executor → GraphMutationStore → epoch
+
+`CurationEngine.create(...)` assembles a coherent core; `PlanExecutor` applies
+its plans. The determinism primitives (`clock`, `ids`, `scores`) and the
+in-memory adapters (`memory`) are the injectable seams. Contracts themselves
+live in `kg_contracts` (frozen); this package only orchestrates over them.
 """
 
 from kgcs.audit import AuditRecorder, AuditSink
@@ -44,8 +53,23 @@ from kgcs.er import (
     SourceKeyChannel,
     evaluate,
 )
+from kgcs.executor import (
+    DEFAULT_SUPPORTED_OPERATIONS,
+    INVERSE_OPERATION,
+    CompensationResult,
+    Compensator,
+    EpochPublisher,
+    ExecutionAuditSink,
+    ExecutionOutcome,
+    ExecutionRecord,
+    PlanExecutor,
+)
 from kgcs.ids import DerivedIdFactory, IdFactory, UlidIdFactory, is_well_formed_graph_id
-from kgcs.memory import InMemoryAuditSink
+from kgcs.memory import (
+    InMemoryAuditSink,
+    InMemoryEpochPublisher,
+    InMemoryExecutionAuditSink,
+)
 from kgcs.planner import (
     CurationPlanner,
     PlannedOperation,
@@ -90,6 +114,16 @@ __all__ = [
     "ResolvedCandidate",
     "AuditRecorder",
     "AuditSink",
+    # executor (write path)
+    "PlanExecutor",
+    "ExecutionOutcome",
+    "ExecutionRecord",
+    "ExecutionAuditSink",
+    "EpochPublisher",
+    "Compensator",
+    "CompensationResult",
+    "INVERSE_OPERATION",
+    "DEFAULT_SUPPORTED_OPERATIONS",
     # determinism primitives
     "Clock",
     "SystemClock",
@@ -124,4 +158,6 @@ __all__ = [
     "GoldenSet",
     "CalibrationMetrics",
     "evaluate",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
 ]

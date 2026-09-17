@@ -32,13 +32,21 @@
   evaluation; no cluster validation / policy / LLM (later waves); no
   cosine-threshold decision. 146 pytest, ruff, strict mypy. Surfaced ADR
   candidates 0005–0008. Branch `wave2/er`, sibling of PR B off Wave-0 core.
+- 2026-08-21: Wave 1 (PR B) — transaction-aware executor + compensation +
+  curation epochs. `src/kgcs/executor/` (PlanExecutor, Compensator,
+  ExecutionRecord/Outcome, EpochPublisher/ExecutionAuditSink) + in-memory
+  adapters. Only mutation path is `GraphMutationStore.apply`; stale plans
+  rejected via preconditions; unsupported ops fail explicitly; epoch published
+  on commit; compensating plans generated (LIFO inverse map, CREATE_IDENTITY /
+  PROMOTE_ONTOLOGY_TERM declared non-compensable). 127 pytest, ruff, strict
+  mypy green. Branch `wave1/executor`, stacked on Wave-0 core.
 
 Works: packaging + cross-repo contract verification against `kg_contracts`
 v2; deterministic curation core (Candidate → validate → policy → plan →
-audit) reconciled onto v0.3, gates green, pending independent review + owner
-merge (PR #5 / PR A).
-Not built yet: transaction-aware executor + compensation + epochs (Wave 1),
-ER 5a/5b (Waves 2–3), LLM curation orchestrator (Wave 4), re-curation +
-concept/ontology evolution (Wave 5), review queue/CLI + backpressure (Wave
-6), semantic audit/replay + kg_eval (Wave 7), cross-repo E2E (Wave 8),
-steward/release reconciliation (Wave 9).
+audit) reconciled onto v0.3 (PR #5 / PR A); transaction-aware executor +
+compensation + epochs (PR B, `wave1/executor`). Both gates green, pending
+independent review + owner merge.
+Not built yet: ER 5a/5b (Waves 2–3), LLM curation orchestrator (Wave 4),
+re-curation + concept/ontology evolution (Wave 5), review queue/CLI +
+backpressure (Wave 6), semantic audit/replay + kg_eval (Wave 7), cross-repo
+E2E (Wave 8), steward/release reconciliation (Wave 9).
