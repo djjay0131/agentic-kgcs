@@ -1,5 +1,24 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-17 (wrap-up): **KGCS v1 build fully closed out.** All build PRs
+merged (#5, #10–#17) + the completion PR (#27); PR #18 closed as executed;
+Issue #2 re-dispositioned (kept open — items 1/4 KGIS/contract-owned). Stale
+branches cleaned: deleted `backup/pr5-original` and remote
+`docs/2026-08-22-kgcs-v1-orchestrated-build`. Kept: `docs/2026-09-10-kgcs-completion-orchestration`
+(the completion plan's home, referenced by the reconciliation record, pending
+an owner declaration of the `llm/plans/` slot). **Left for the owner** (not
+touched — active governance domain): local branches
+`governance/upgrade-v0.5` (superseded by the merged v0.9 upgrade) and
+`governance/repoint-kgis-design-authority` (1 unmerged commit).
+**Only open items — all owner/upstream/adopter, none KGCS-core:** (a) tag the
+**v1.0.0** release + bump `pyproject` (currently 0.2.0); (b) declare the
+`llm/plans/` governance slot so plans can live on `main`; (c) decide the two
+governance branches above; (d) upstream KGIS/contract asks — ADR candidates
+0004 (authority field) & 0015 (reference-store op coverage), Issue #2 item 1
+(subject-scoped erasure), the `kg_eval` MetricProvider adapter; (e) adopter
+domain wiring (research/baseball/traffic/construction). `main` green: ruff,
+mypy strict (49 files), 435 pytest, governance 4/4.
+
 Update 2026-09-17 (v1 COMPLETE): **KGCS v1 is merged and formally complete on
 `main`.** All nine build PRs (#5, #10–#17) are merged; governance is current
 (agentic-governance v0.9.0). `main` is green: ruff==0.16.4 (pinned rules

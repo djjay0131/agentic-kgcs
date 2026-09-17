@@ -97,6 +97,12 @@
   retained upstream-blocked (0004, 0015), 4 adopter-deferred (0005–0008). Issue
   #2 re-dispositioned. Record: `llm/governance/kgcs-v1-completion-reconciliation.md`.
   `main` green: ruff, mypy strict (49 files), 435 pytest, governance 4/4.
+- 2026-09-17: wrap-up — completion PR #27 merged; PR #18 closed (executed);
+  stale branches deleted (`backup/pr5-original`, remote
+  `docs/2026-08-22-kgcs-v1-orchestrated-build`). Open items are owner/upstream/
+  adopter only (v1.0.0 tag, declare `llm/plans/` slot, governance branches,
+  upstream 0004/0015 + Issue #2 item 1 + `kg_eval` adapter, adopter wiring).
+  See `activeContext.md` for the full wrap-up.
 
 Works: the full KGCS v1 platform on `main` — deterministic core →
 transaction-aware executor + compensation + epochs → ER substrate (normalize/
