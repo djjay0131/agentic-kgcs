@@ -1,5 +1,24 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 2, PR C): **Entity-resolution substrate (ER 5a).** On
+branch `wave2/er`, stacked on the Wave-0 core (sibling of PR B). New package
+`src/kgcs/er/`: `normalize` (deterministic normalization + identity rules —
+never merges; `DEFAULT_STRONG_NAMESPACES` heuristic), `blocking` (multi-channel
+recall-oriented blocking — exact-identifier / normalized-name / source-key
+channels + optional injected `VectorIndex` embedding channel; canonical
+deduped `CandidatePair`s with channel provenance), `features` (typed
+honest-null `PairFeatures` with explicit AGREE/CONTRADICT/UNKNOWN; pure-Python
+jaro-winkler/cosine/haversine; mutual-exclusion on contradicting strong ids or
+disjoint time), `matcher` (`DeterministicRuleMatcher` baseline +
+`CalibratedMatcher` with dependency-free logistic fit; `CalibrationKey` by
+graph/type/source-pair/version/consequence; golden-set `evaluate`). NO cluster
+validation, NO policy gate, NO LLM (later waves). Exit criteria proven:
+reproducible probabilities from stored feature vector + version; no
+cosine/embedding threshold decides (embedding=1.0 + contradicting ids scores
+<0.5); calibration evaluable on a golden set; empty golden set → honest-null
+metrics. Gates: 146 pytest (+46), ruff, strict mypy (19 files). Surfaced 4
+contract frictions → ADR candidates 0005–0008. NEXT: Wave 3 — cluster
+validation + deterministic resolution policy + DG-5 curation profiles.
 Update 2026-08-21 (Wave 1): **Transaction-aware executor + compensation +
 curation epochs (PR B).** On branch `wave1/executor`, stacked on the Wave-0
 core branch. New package `src/kgcs/executor/`:

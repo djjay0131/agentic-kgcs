@@ -26,6 +26,12 @@
   four still open vs current `kg_contracts`). Gates green: 98 pytest, ruff,
   strict mypy. Core still stops at `CurationPlan`; no executor smuggled in.
 
+- 2026-08-22: Wave 2 (PR C) — ER 5a substrate. `src/kgcs/er/` (normalize,
+  blocking, features, matcher) + `testing/er.py` MatcherContract. Deterministic,
+  honest-null, calibrated matcher (rule baseline + logistic), golden-set
+  evaluation; no cluster validation / policy / LLM (later waves); no
+  cosine-threshold decision. 146 pytest, ruff, strict mypy. Surfaced ADR
+  candidates 0005–0008. Branch `wave2/er`, sibling of PR B off Wave-0 core.
 - 2026-08-21: Wave 1 (PR B) — transaction-aware executor + compensation +
   curation epochs. `src/kgcs/executor/` (PlanExecutor, Compensator,
   ExecutionRecord/Outcome, EpochPublisher/ExecutionAuditSink) + in-memory

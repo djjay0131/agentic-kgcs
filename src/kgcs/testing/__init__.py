@@ -7,5 +7,6 @@ zero infrastructure.
 """
 
 from kgcs.testing.contract import AuditSinkContract, CandidateValidatorContract
+from kgcs.testing.er import MatcherContract
 
-__all__ = ["AuditSinkContract", "CandidateValidatorContract"]
+__all__ = ["AuditSinkContract", "CandidateValidatorContract", "MatcherContract"]
