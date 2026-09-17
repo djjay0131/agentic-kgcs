@@ -32,6 +32,14 @@
   evaluation; no cluster validation / policy / LLM (later waves); no
   cosine-threshold decision. 146 pytest, ruff, strict mypy. Surfaced ADR
   candidates 0005–0008. Branch `wave2/er`, sibling of PR B off Wave-0 core.
+- 2026-08-21: Wave 1 (PR B) — transaction-aware executor + compensation +
+  curation epochs. `src/kgcs/executor/` (PlanExecutor, Compensator,
+  ExecutionRecord/Outcome, EpochPublisher/ExecutionAuditSink) + in-memory
+  adapters. Only mutation path is `GraphMutationStore.apply`; stale plans
+  rejected via preconditions; unsupported ops fail explicitly; epoch published
+  on commit; compensating plans generated (LIFO inverse map, CREATE_IDENTITY /
+  PROMOTE_ONTOLOGY_TERM declared non-compensable). 127 pytest, ruff, strict
+  mypy green. Branch `wave1/executor`, stacked on Wave-0 core.
 
 - 2026-08-22: Wave 3 (PR D) — cluster validation + deterministic ER resolution
   policy + DG-5 curation profiles. `er/cluster.py`, `profiles.py`,

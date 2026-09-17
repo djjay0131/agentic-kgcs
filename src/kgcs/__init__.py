@@ -355,4 +355,6 @@ __all__ = [
     "ClusterBacklog",
     "BackpressureSignal",
     "BackpressureAction",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
 ]
