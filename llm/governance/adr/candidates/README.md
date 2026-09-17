@@ -14,8 +14,16 @@ Each candidate records:
 - **Possible future contract improvement** — a suggestion for a *future*
   contract revision, to be adjudicated by the contract owner. Not a decision.
 
-These are inputs to a later governance review, not accepted ADRs. Promotion
-to a real ADR (here or in `agentic-kgis/docs/adr/`) is the owner's call.
+**Reconciled at v1 completion (2026-09-17)** — see
+[`../kgcs-v1-completion-reconciliation.md`](../../kgcs-v1-completion-reconciliation.md)
+§2. Each candidate now carries a `Status` and a *Disposition* note:
+**Accepted (KGCS-local durable decision, v1):** 0001, 0002, 0003, 0009, 0010,
+0011, 0012, 0013, 0014, 0016. **Open (retained — upstream kg_contracts/KGIS
+blocker):** 0004, 0015. **Deferred (adopter/upstream backlog):** 0005, 0006,
+0007, 0008. No candidate was resolved by a KGIS contract change (KGIS ADRs
+0015–0023 added no fields that retire these) and none is obsolete. System-level
+contract changes remain the owner's call, tracked in
+`agentic-kgis/llm/governance/adr/`.
 
 ## Index
 

@@ -1,6 +1,6 @@
 # ADR candidate 0009: no ER-decision/propose-link type in `kg_contracts`
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 3 (cluster validation + resolution policy), `kgcs.er.resolution`
 
@@ -33,3 +33,9 @@ with a `PROPOSE_IDENTITY_LINK` operation carrying `IdentityLinkKind`) so the
 executor can consume ER decisions directly rather than through a lossy
 projection, and so a reject-only proposal is a first-class, auditable,
 non-merging operation. Until then, `ErAction` stays KGCS-local.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

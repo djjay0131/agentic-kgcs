@@ -1,6 +1,6 @@
 # ADR candidate 0011: identity authority mode is not a first-class contract field
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 3 (DG-5 curation profiles), `kgcs.profiles`
 
@@ -41,3 +41,9 @@ authoritative status travels with the data and cannot be lost if a profile is
 misconfigured or absent. Until then, treat the profile registry as the
 authority source and default unknown scopes to the safe (non-`OPEN`) side where
 a domain requires it. See also [[0004-no-authority-provenance-on-candidates]].
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

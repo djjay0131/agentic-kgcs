@@ -1,6 +1,6 @@
 # ADR candidate 0007: `EntityCandidate` carries no `valid_period`
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Deferred (adopter/upstream backlog — not a KGCS v1 blocker)
 Date: 2026-08-22
 Surfaced by: Wave 2 (ER 5a), `kgcs.er.features`
 
@@ -34,3 +34,9 @@ Either add an optional `valid_period` (or `active_period`) to `EntityCandidate`
 modelled at the relation/attribute level and provide ER a defined way to fold
 those into an entity temporal view. Until then, entity-level temporal features
 depend on a `properties` convention rather than a typed field.
+
+## Disposition (v1 completion, 2026-09-17)
+
+ADOPTER — deferred to the adopter/upstream backlog; KGCS's local handling (injectable/honest-null) is correct for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

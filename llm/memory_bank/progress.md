@@ -85,16 +85,30 @@
   independently-reviewed owner-ready DRAFT PRs (#5, #10–#17). DG-1..DG-5
   dispositioned (all durable), Issue #2 dispositioned (items 2/3 delivered;
   1/4 KGIS/contract-owned), 16 ADR candidates open for owner adjudication,
-  release boundary v0.1.0 recommended. Full detail in
+  release boundary recommended. Full detail in
   `llm/memory_bank/kgcs-v1-reconciliation.md`. Top-of-stack: 435 pytest, ruff,
   strict mypy, governance 4/4.
+- 2026-09-17: **KGCS v1 COMPLETE.** All nine build PRs (#5, #10–#17) merged to
+  `main`; governance current (v0.9.0). Resolved ruff import-sort drift
+  (pin ruff==0.16.4 + explicit E4/E7/E9/F/I) and the `FrozenMapping`
+  compensation-serialization break (via KGIS's `_frozen` serializer). Gate G2
+  (contract reconciliation vs KGIS ADRs 0015–0023 + `kg_contracts`) — no
+  blocking defect. 16 ADR candidates reconciled: 10 accepted KGCS-local, 2
+  retained upstream-blocked (0004, 0015), 4 adopter-deferred (0005–0008). Issue
+  #2 re-dispositioned. Record: `llm/governance/kgcs-v1-completion-reconciliation.md`.
+  `main` green: ruff, mypy strict (49 files), 435 pytest, governance 4/4.
 
-Works: packaging + cross-repo contract verification against `kg_contracts`
-v2; deterministic curation core (Candidate → validate → policy → plan →
-audit) reconciled onto v0.3, gates green, pending independent review + owner
-merge (PR #5 / PR A).
-Not built yet: transaction-aware executor + compensation + epochs (Wave 1),
-ER 5a/5b (Waves 2–3), LLM curation orchestrator (Wave 4), re-curation +
-concept/ontology evolution (Wave 5), review queue/CLI + backpressure (Wave
-6), semantic audit/replay + kg_eval (Wave 7), cross-repo E2E (Wave 8),
-steward/release reconciliation (Wave 9).
+Works: the full KGCS v1 platform on `main` — deterministic core →
+transaction-aware executor + compensation + epochs → ER substrate (normalize/
+block/features/calibrated matcher) → cluster validation + resolution policy +
+DG-5 profiles → bounded LLM curation orchestrator + advisers → evidence-driven
+re-curation + concept/ontology evolution → review API/queue/CLI + backpressure →
+semantic audit/replay + kg_eval seam → KGIS→KGCS end-to-end (flagship
+research-paper re-curation + non-paper shape). All gates green; governance
+v0.9.0.
+Remaining (not KGCS-core): adopter domain wiring (research/baseball/traffic/
+construction); deferred v1 items (polished web review UI, live-LLM CI,
+backend-specific vector/full-text, deployment wrapper, full migration
+framework); upstream asks (candidates 0004, 0015; the `kg_eval` MetricProvider
+adapter at the kg_eval consumer side); Issue #2 item 1 (subject-scoped erasure,
+KGIS/contract-owned). Owner to tag the v1 release.

@@ -1,5 +1,20 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-17 (v1 COMPLETE): **KGCS v1 is merged and formally complete on
+`main`.** All nine build PRs (#5, #10–#17) are merged; governance is current
+(agentic-governance v0.9.0). `main` is green: ruff==0.16.4 (pinned rules
+E4/E7/E9/F/I), mypy strict (49 files), 435 pytest, governance checks 4/4. The
+ruff import-sort drift and the `FrozenMapping` compensation-serialization break
+are resolved (the latter by KGIS's `_frozen` serializer). Gate G2 (cross-repo
+contract reconciliation vs KGIS ADRs 0015–0023 + `kg_contracts`) found **no
+blocking defect**; the 16 ADR candidates are reconciled (10 accepted KGCS-local,
+2 retained upstream-blocked — 0004/0015, 4 adopter-deferred — 0005–0008); Issue
+#2 re-dispositioned (items 2/3 KGCS-satisfied, items 1/4 KGIS/contract-owned).
+Full record: `llm/governance/kgcs-v1-completion-reconciliation.md`. Remaining is
+adopter domain wiring + the deferred v1 items + upstream asks (0004/0015, the
+`kg_eval` MetricProvider adapter) — none KGCS-core. NEXT: owner tags the v1
+release; adopters wire their domains.
+
 Update 2026-08-22 (Wave 9 — steward reconciliation): **KGCS v1 orchestrated
 build complete — all nine waves implemented as independently-reviewed,
 owner-ready DRAFT PRs (#5, #10–#17). Nothing merged; awaiting owner review.**

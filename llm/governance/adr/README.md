@@ -1,19 +1,25 @@
 # Architecture Decision Records — agentic-kgcs (local)
 
 Only kgcs-local decisions live here. System-level ADRs (spanning KGIS and
-KGCS) live in `agentic-kgis/docs/adr/` — see ADRs 0001–0005 there for the
-founding decisions. Use `0000-template.md`.
+KGCS) live in `agentic-kgis/llm/governance/adr/` (0001–0023 there) for the
+founding + contract decisions. Use `0000-template.md`.
 
 ## Index
 
-(no accepted local ADRs yet)
+No standalone accepted local ADR files yet. At **v1 completion (2026-09-17)**
+ten contract-friction candidates were **accepted as durable KGCS-local
+decisions in place** (their `Status` reads *Accepted*): candidates 0001, 0002,
+0003, 0009, 0010, 0011, 0012, 0013, 0014, 0016. The full reconciliation is
+[`kgcs-v1-completion-reconciliation.md`](../kgcs-v1-completion-reconciliation.md).
+(A future pass may lift the accepted ones into standalone `NNNN-*.md` ADR files;
+the decisions themselves are recorded on the candidate documents today.)
 
 ## Candidates (contract-friction log)
 
-Open contract frictions surfaced during implementation live in
-[`candidates/`](candidates/README.md) as ADR *candidates* — inputs to a
-later governance review, not accepted decisions. There are sixteen, all still
-open against current `kg_contracts`:
+Contract frictions surfaced during the build live in
+[`candidates/`](candidates/README.md), reconciled at v1 completion — ten
+Accepted, two Open (upstream blocker: 0004, 0015), four Deferred to adopter/
+upstream backlog (0005–0008):
 
 - [0001 — `artifact` candidate has no curation operation type](candidates/0001-artifact-has-no-operation-type.md)
 - [0002 — `AuditRecord` has no candidate/validation/resolution linkage](candidates/0002-audit-record-lacks-candidate-lineage.md)
