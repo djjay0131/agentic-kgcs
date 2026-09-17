@@ -14,7 +14,7 @@ Knowledge Graph Curation Service. Ships `kgcs`:
 - **review/** — review-domain operations API + CLI.
 
 Depends only on `kg_contracts` (shipped by sibling repo `agentic-kgis`).
-Design: `agentic-kgis/docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` (v2)
+Design: `agentic-kgis/llm/specs/2026-07-09-kgis-kgcs-design.md` (v2)
 
 ## Dev setup
 
