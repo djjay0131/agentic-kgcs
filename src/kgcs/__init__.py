@@ -1,29 +1,20 @@
-"""kgcs: the Knowledge Graph Curation Service — deterministic core + executor.
+"""kgcs: the deterministic Knowledge Graph Curation core (Sprint 1).
 
-The curation library behind every portfolio knowledge graph. Two halves:
+The first curation engine: it begins at the `Candidate` boundary and produces
+a complete, immutable `CurationPlan` plus its `ValidationDecision`s,
+`ResolutionDecision`s, and `AuditRecord`s — and stops there. Nothing is
+written to the graph, no entity resolution runs, and there are no embeddings,
+LLMs, or probabilistic behavior. Every output is a pure function of the input
+candidates and the injected `IdFactory` (the audit stream additionally of the
+injected `Clock`), so identical input yields an identical plan.
 
-- a **deterministic core** (`validation`, `policy`, `planner`, `audit`, wired
-  by `engine`) that begins at the `Candidate` boundary and produces a
-  complete, immutable `CurationPlan` plus its `ValidationDecision`s,
-  `ResolutionDecision`s, and `AuditRecord`s — and stops there. No graph
-  mutation, no entity resolution, no embeddings/LLMs. Every output is a pure
-  function of the input candidates and the injected `IdFactory` (the audit
-  stream additionally of the injected `Clock`), so identical input yields an
-  identical plan.
-- a **transaction-aware executor** (`executor`) — the *only* component that
-  applies a `CurationPlan` to a `GraphMutationStore`. It checks preconditions,
-  rejects stale plans, publishes the curation epoch, fails explicitly on
-  operations an adapter cannot apply, records execution audit, and generates
-  compensating plans for rollback. Applications never hold a write surface.
+    Candidate → Validator → Policy → Planner → Audit
 
-    Candidate → Validator → Policy → Planner → Audit → CurationPlan
-                                                            ↓
-                                          Executor → GraphMutationStore → epoch
-
-`CurationEngine.create(...)` assembles a coherent core; `PlanExecutor` applies
-its plans. The determinism primitives (`clock`, `ids`, `scores`) and the
-in-memory adapters (`memory`) are the injectable seams. Contracts themselves
-live in `kg_contracts` (frozen); this package only orchestrates over them.
+The stages are the modules `validation`, `policy`, `planner`, `audit`, wired
+by `engine`. `CurationEngine.create(...)` assembles a coherent default; the
+determinism primitives (`clock`, `ids`, `scores`) and the in-memory
+`AuditSink` (`memory`) are the injectable seams. Contracts themselves live in
+`kg_contracts` (frozen); this package only orchestrates over them.
 """
 
 from kgcs.advisers import (
@@ -100,6 +91,7 @@ from kgcs.er import (
     select_survivor,
 )
 from kgcs.executor import (
+    DEFAULT_EXECUTED_BY,
     DEFAULT_SUPPORTED_OPERATIONS,
     INVERSE_OPERATION,
     CompensationResult,
@@ -134,6 +126,25 @@ from kgcs.profiles import (
     default_profile,
     default_registry,
     projection_consumer_profile,
+)
+from kgcs.recuration import (
+    AssertionReassignment,
+    ConceptEvolutionPlanner,
+    CurationTrigger,
+    DependencyIndex,
+    EvolutionKind,
+    EvolutionResult,
+    IllegalOntologyTransition,
+    InMemoryDependencyIndex,
+    InMemoryTriggerQueue,
+    OntologyLifecycle,
+    OntologyPromotionRefused,
+    OntologyTerm,
+    OntologyTermState,
+    TriggerKind,
+    TriggerQueue,
+    VersionContext,
+    is_legal_transition,
 )
 from kgcs.scores import score_vector
 from kgcs.validation import (
@@ -172,16 +183,6 @@ __all__ = [
     "ResolvedCandidate",
     "AuditRecorder",
     "AuditSink",
-    # executor (write path)
-    "PlanExecutor",
-    "ExecutionOutcome",
-    "ExecutionRecord",
-    "ExecutionAuditSink",
-    "EpochPublisher",
-    "Compensator",
-    "CompensationResult",
-    "INVERSE_OPERATION",
-    "DEFAULT_SUPPORTED_OPERATIONS",
     # determinism primitives
     "Clock",
     "SystemClock",
@@ -193,6 +194,8 @@ __all__ = [
     "score_vector",
     # in-memory adapters
     "InMemoryAuditSink",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
     # entity resolution (Wave 2 / ER 5a, spec §7.4)
     "NormalizedEntity",
     "DefaultNormalizer",
@@ -274,6 +277,35 @@ __all__ = [
     "OntologyRecommendation",
     "CurationOrchestrator",
     "OrchestrationResult",
+    # transaction-aware executor + compensation (Wave 1 / Plan 3)
+    "PlanExecutor",
+    "ExecutionOutcome",
+    "ExecutionRecord",
+    "ExecutionAuditSink",
+    "EpochPublisher",
+    "DEFAULT_EXECUTED_BY",
+    "DEFAULT_SUPPORTED_OPERATIONS",
+    "Compensator",
+    "CompensationResult",
+    "INVERSE_OPERATION",
+    # re-curation + concept/ontology evolution (Wave 5 / DG-1 / DG-3)
+    "TriggerKind",
+    "VersionContext",
+    "CurationTrigger",
+    "TriggerQueue",
+    "InMemoryTriggerQueue",
+    "DependencyIndex",
+    "InMemoryDependencyIndex",
+    "EvolutionKind",
+    "AssertionReassignment",
+    "EvolutionResult",
+    "ConceptEvolutionPlanner",
+    "OntologyTermState",
+    "OntologyTerm",
+    "OntologyLifecycle",
+    "IllegalOntologyTransition",
+    "OntologyPromotionRefused",
+    "is_legal_transition",
     "InMemoryEpochPublisher",
     "InMemoryExecutionAuditSink",
 ]
