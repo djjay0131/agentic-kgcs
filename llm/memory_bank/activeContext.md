@@ -74,6 +74,31 @@ cosine/embedding threshold decides (embedding=1.0 + contradicting ids scores
 metrics. Gates: 146 pytest (+46), ruff, strict mypy (19 files). Surfaced 4
 contract frictions → ADR candidates 0005–0008. NEXT: Wave 3 — cluster
 validation + deterministic resolution policy + DG-5 curation profiles.
+Update 2026-08-21 (Wave 1): **Transaction-aware executor + compensation +
+curation epochs (PR B).** On branch `wave1/executor`, stacked on the Wave-0
+core branch. New package `src/kgcs/executor/`:
+- `executor.py` — `PlanExecutor` compiles a `CurationPlan` → `GraphMutationBatch`
+  and applies it via `GraphMutationStore` (the *only* mutation path). Outcomes:
+  `COMMITTED` (advances + publishes the curation epoch), `STALE` (failed
+  preconditions → re-evaluate, never blind-retry), `UNSUPPORTED_OPERATION`
+  (op outside the adapter's support — fails *before* touching the store, with a
+  `NotImplementedError` backstop), `EMPTY`, `ERROR`. Every attempt (incl.
+  compensations) yields an immutable KGCS-local `ExecutionRecord` — deliberately
+  NOT `kg_contracts.AuditRecord` (per Wave-1 audit-seam guidance + ADR cand
+  0002), linked by `plan_id`.
+- `compensate.py` — `Compensator` builds a compensating `CurationPlan` (inverse
+  ops, LIFO). `INVERSE_OPERATION` covers all 7 op types; `CREATE_IDENTITY` and
+  `PROMOTE_ONTOLOGY_TERM` are declared non-compensable (no inverse op in the v1
+  vocabulary) — invariant 8 stated precisely.
+- `memory/execution.py` — `InMemoryEpochPublisher`, `InMemoryExecutionAuditSink`.
+- `ids.py` gained deterministic `batch_id`/`execution_id`.
+Idempotency falls out of deterministic op ids: re-executing a committed plan is
+rejected `STALE` (the `entity_version=0` guard no longer holds). Gates:
+127 pytest (+27), ruff, strict mypy. Wave-1 exit criteria met: an in-memory
+Candidate→canonical path advances a visible epoch; ADR candidate 0003
+(snapshot-level precondition enforcement) is now realized at the executor.
+NEXT: Wave 2 — ER 5a (normalization, blocking, typed features, calibrated
+matcher).
 
 Update 2026-08-21: **Wave 0 of the orchestrated KGCS v1 build
 (`llm/plans/2026-08-22-kgcs-v1-orchestrated-build.md`) — reconciling the
