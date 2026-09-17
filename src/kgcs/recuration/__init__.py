@@ -30,6 +30,7 @@ from kgcs.recuration.ontology import (
     TermKind,
     is_legal_transition,
 )
+from kgcs.recuration.router import EvolutionRouter
 from kgcs.recuration.targeting import DependencyIndex, InMemoryDependencyIndex
 from kgcs.recuration.triggers import (
     CurationTrigger,
@@ -58,6 +59,7 @@ __all__ = [
     "AssertionReassignment",
     "EvolutionResult",
     "ConceptEvolutionPlanner",
+    "EvolutionRouter",
     # ontology lifecycle
     "OntologyTermState",
     "TermKind",

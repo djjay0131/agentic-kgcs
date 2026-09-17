@@ -12,7 +12,7 @@ founding decisions. Use `0000-template.md`.
 
 Open contract frictions surfaced during implementation live in
 [`candidates/`](candidates/README.md) as ADR *candidates* — inputs to a
-later governance review, not accepted decisions. There are fourteen, all still
+later governance review, not accepted decisions. There are sixteen, all still
 open against current `kg_contracts`:
 
 - [0001 — `artifact` candidate has no curation operation type](candidates/0001-artifact-has-no-operation-type.md)
@@ -29,5 +29,7 @@ open against current `kg_contracts`:
 - [0012 — no contract home for an LLM adviser assessment](candidates/0012-no-adviser-assessment-contract-type.md)
 - [0013 — a re-curation plan's provenance is a trigger, not a candidate](candidates/0013-recuration-plan-provenance-source.md)
 - [0014 — the `ReviewQueue` contract can't express typed outcomes or a typed review case](candidates/0014-review-queue-surface-limits.md)
+- [0015 — the reference `MemoryGraphStore` applies only two operation types](candidates/0015-reference-store-limited-operation-coverage.md)
+- [0016 — an executed compensation needs re-stamping against the current snapshot](candidates/0016-compensation-needs-snapshot-restamp.md)
 
-(0001–0004 from Wave 0; 0005–0008 from Wave 2; 0009–0011 from Wave 3; 0012 from Wave 4; 0013 from Wave 5; 0014 from Wave 6.)
+(0001–0004 from Wave 0; 0005–0008 from Wave 2; 0009–0011 from Wave 3; 0012 from Wave 4; 0013 from Wave 5; 0014 from Wave 6; 0015–0016 from Wave 8.)

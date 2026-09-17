@@ -1,5 +1,38 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 9 — steward reconciliation): **KGCS v1 orchestrated
+build complete — all nine waves implemented as independently-reviewed,
+owner-ready DRAFT PRs (#5, #10–#17). Nothing merged; awaiting owner review.**
+Full reconciliation (PR stack + merge order, DG-1..DG-5 dispositions, Issue #2
+disposition, deferred/adopter work, release boundary) is in
+[`kgcs-v1-reconciliation.md`](kgcs-v1-reconciliation.md). Top-of-stack gates:
+435 pytest, ruff, strict mypy (49 files), governance layout 4/4. DG-1..DG-5 all
+became durable architecture (plan defaults, no contract change). Issue #2 items
+2 & 3 delivered (reject-only profile + projection-consumer); items 1 (erasure)
+& 4 (PII keys) are KGIS/contract-owned. 16 ADR candidates raised, all open for
+owner adjudication. Recommended first release: KGCS v0.1.0 on merge of A–I.
+
+Update 2026-08-22 (Wave 8, PR I): **KGIS→KGCS end-to-end — the flagship.** On
+branch `wave8/e2e`, stacked on Wave 7. Test-only (`tests/kgcs/e2e_harness.py` +
+`test_e2e_*.py`), no `src/` change; `src/kgcs` still imports no `kgis`.
+- Scenario 1 drives the REAL `kgis.IngestPipeline` (structured mode) →
+  MemoryCandidateSink → CurationEngine → PlanExecutor → MemoryGraphStore → epoch
+  (genuine cross-repo composition over the shared contract).
+- Flagship re-curation is parametrized over a research-PAPER shape AND a
+  non-paper SENSOR shape (domain-neutral): source A → epoch N; contradicting
+  evidence → CurationTrigger → targeting → AssertionAdviser reasons over the
+  cited evidence → supersession plan executes → epoch N+1 with the old
+  assertion still queryable (SUPERSEDED, bitemporal).
+- Six required scenarios covered (structured auto; document+recorded-LLM; the
+  flagship; stale→reject→safe commit; merge+compensating rollback;
+  client-authoritative never repaired). §9 laws 1,3,4,6,8,9,10,11,13,14,16,17
+  asserted end-to-end. A test-only `E2EGraphStore` widens the reference store to
+  execute RETRACT_ASSERTION via the contract's `mark_superseded`.
+Gates: 430 pytest (+20), ruff, strict mypy (48 files). ADR candidates 0015
+(reference-store op coverage) + 0016 (compensation re-stamp). NEXT: Wave 9 —
+steward reconciliation + Issue #2 disposition + release readiness + the
+consolidated report.
+
 Update 2026-08-22 (Wave 7, PR H): **Semantic curation audit + replay + honest-null
 evaluation + kg_eval seam.** On branch `wave7/audit-eval`, stacked on Wave 6. New
 package `src/kgcs/observability/` (the plan's "audit/" slot, renamed to avoid
