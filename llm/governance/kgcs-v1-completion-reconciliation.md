@@ -3,7 +3,11 @@
 Status: Completion record
 Date: 2026-09-17
 Governance: agentic-governance v0.9.0
-Plan: `llm/plans/2026-09-10-kgcs-completion-orchestration.md` (Gates G2, §10, §11)
+Plan: the KGCS completion-orchestration plan (Gates G2, §10, §11), tracked on
+branch `docs/2026-09-10-kgcs-completion-orchestration` — not yet on `main` (its
+`llm/plans/` slot is undeclared in the governance delta; declaring it is the
+owner's governance action). Its definition-of-complete is reproduced in §4
+below, so this record is self-contained.
 
 This is the formal completion reconciliation for KGCS v1. All nine build waves
 are merged to `main` (PRs #5, #10–#17) and CI is green (ruff pinned 0.16.4 +
@@ -24,7 +28,7 @@ KGCS candidate is resolved by a new contract field.
 | ADR-0021 `CommitResult` fail-closed narrowing | **OK — compliant** | Contract requires `error` or non-empty `failed_preconditions` when `committed=False`. KGCS constructs `CommitResult(committed=False,…)` only in the test-only `tests/kgcs/e2e_harness.py`, guarded so `failed_preconditions` is non-empty; the executor only *consumes* `CommitResult`. No violation in `src/` or tests. |
 | ADR-0022 structured snapshot provenance | No impact | No structured snapshot type added; `Precondition` unchanged. KGCS candidates 0003/0010 project into the same flat `Precondition` as before. |
 | ADR-0020 recommendation-outcomes / honest-null | No impact | Governs the KGIS registry extend-vs-create decision; defines no ER/adviser type for KGCS. Honest-null is shared discipline only. |
-| ADR-0023 candidate/extractor-version fields | No impact | `CandidateEnvelope` gained no `authority`/`valid_period`/`extractor_version`. KGCS candidates 0004/0007/0011 remain unaddressed by contract. |
+| ADR-0023 candidate/extractor-version fields | No impact | ADR-0023 concerns extractor/model-version provenance (not authority); it added no `authority`, `valid_period`, or extractor-version field to `CandidateEnvelope`. KGCS candidates 0004/0007/0011 therefore remain unaddressed by contract. |
 | ADR-0015/0016/0018 | No KGCS counterpart | KGIS ingestion/registry concerns. |
 | ADR-0017 public deterministic-id helper | Not exported; no KGCS candidate | KGCS reimplements Crockford base32 in `ids.py`; dedupe possible if KGIS exports it later. |
 | ADR-0019 open-backend identifier | Unrelated to KGCS 0005 | It concerns `GraphDescriptor.backend`, not `EntityRef` identifier strength. |
