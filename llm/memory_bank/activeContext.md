@@ -1,5 +1,32 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 4, PR E): **Bounded LLM curation orchestrator +
+specialist advisers.** On branch `wave4/llm-advisers`, stacked on Wave 3. New
+package `src/kgcs/advisers/`:
+- `completion.py` — the injected LLM seam: `CompletionPort` (the only LLM
+  surface; no provider SDK), `RecordedCompletionClient` (deterministic replay
+  keyed by request hash; `CompletionMiss` is loud, not silent), and
+  `Failing/Timeout/Malformed` clients for tests.
+- `base.py` — `StructuredAdviser` (render→complete→parse→abstain; catches every
+  port error/parse failure and abstains, never raises to the orchestrator) +
+  DG-4 `AdviserAssessment` (adviser/model/prompt versions, cited evidence
+  intersected with supplied, contradictions, confidence, abstained, trace_id,
+  baseline_before/final_after).
+- `specialists.py` — 5 bounded specialists (Identity/Assertion/Conflict/
+  ConceptEvolution/OntologyEvolution), each returns a typed assessment only,
+  never an operation.
+- `orchestrator.py` — `CurationOrchestrator`: runs the Wave-3 deterministic
+  baseline FIRST, consults advisers only when the baseline routed LLM_ASSESS,
+  folds advice back through the SAME policy gate, and returns
+  `OrchestrationResult{decision, baseline, assessments}` — never an
+  operation/plan. On any LLM failure/absence, returns EXACTLY the baseline
+  decision (law 1). Advice can never upgrade a CLIENT_AUTHORITATIVE pair past
+  the reject-only gate (law 13); law 16 (no write authority) holds — no
+  mutation surface anywhere in advisers.
+Gates: 254 pytest (+46), ruff, strict mypy (27 files). No SDK/network/kgis.
+Surfaced ADR candidate 0012. NEXT: Wave 5 — evidence-driven re-curation +
+concept/ontology evolution.
+
 Update 2026-08-22 (Wave 3, PR D): **Cluster validation + deterministic ER
 resolution policy + DG-5 curation profiles.** On branch `wave3/cluster-policy`,
 stacked on Wave 2 (ER). Completes the deterministic decision spine — the
