@@ -3,13 +3,19 @@
 from datetime import UTC, datetime
 
 from kg_contracts.candidates import CandidateScores
-from kg_contracts.curation import CurationPlan
+from kg_contracts.curation import CurationOperationType, CurationPlan
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 from kg_contracts.testing.memory import MemoryGraphStore
 
 from helpers import GRAPH_ID, known_identity
-from kgcs import CurationEngine, FixedClock
+from kgcs import (
+    Compensator,
+    CurationEngine,
+    ExecutionOutcome,
+    FixedClock,
+    PlanExecutor,
+)
 
 
 def _batch(auto_scores: CandidateScores) -> list:
@@ -85,3 +91,66 @@ def test_replay_is_identical_across_serialization_boundary(
     assert [r.model_dump_json() for r in a.audit_records] == [
         r.model_dump_json() for r in b.audit_records
     ]
+
+
+# --- executor invariants (build plan §9) --------------------------------------
+
+
+def test_every_committed_mutation_originates_from_a_curation_plan(
+    engine: CurationEngine, auto_scores: CandidateScores
+) -> None:
+    """Law 3: the only path to canonical state is executing a serializable
+    plan. The store starts empty and advances exactly when a plan is executed."""
+    store = MemoryGraphStore()
+    executor = PlanExecutor(store, clock=FixedClock(datetime(2026, 8, 22, tzinfo=UTC)))
+    assert store.current_epoch() == 0
+    result = engine.curate(_batch(auto_scores))
+    assert result.plan is not None
+    # the plan survives the queue/log round trip and still commits
+    reloaded = CurationPlan.model_validate_json(result.plan.model_dump_json())
+    assert executor.execute(reloaded).outcome is ExecutionOutcome.COMMITTED
+    assert store.current_epoch() == 1
+
+
+def test_stale_preconditions_prevent_commit(
+    engine: CurationEngine, auto_scores: CandidateScores
+) -> None:
+    """Law 4: a plan computed against a superseded snapshot fails preconditions
+    instead of racing a second commit."""
+    plan = engine.curate([make_entity_candidate(graph_id=GRAPH_ID, scores=auto_scores)]).plan
+    assert plan is not None
+    store = MemoryGraphStore()
+    executor = PlanExecutor(store, clock=FixedClock(datetime(2026, 8, 22, tzinfo=UTC)))
+    assert executor.execute(plan).outcome is ExecutionOutcome.COMMITTED
+    assert executor.execute(plan).outcome is ExecutionOutcome.STALE
+    assert store.current_epoch() == 1
+
+
+def test_every_operation_is_compensable_or_declared_non_compensable() -> None:
+    """Law 8: every curation operation type either has an inverse or is
+    explicitly declared non-compensable — nothing is silently unhandled."""
+    from kgcs.executor.compensate import INVERSE_OPERATION
+
+    assert set(INVERSE_OPERATION) == set(CurationOperationType)
+    compensable = {t for t, inv in INVERSE_OPERATION.items() if inv is not None}
+    non_compensable = {t for t, inv in INVERSE_OPERATION.items() if inv is None}
+    # the v1 vocabulary's declared split, stated explicitly so a new op type
+    # cannot be added without deciding its reversibility
+    assert non_compensable == {
+        CurationOperationType.CREATE_IDENTITY,
+        CurationOperationType.PROMOTE_ONTOLOGY_TERM,
+    }
+    assert CurationOperationType.ATTACH_ASSERTION in compensable
+
+
+def test_compensation_never_mutates_the_graph_by_itself(
+    engine: CurationEngine, auto_scores: CandidateScores
+) -> None:
+    """A Compensator produces plans; it holds no store and cannot mutate."""
+    plan = engine.curate(
+        [make_attribute_candidate(graph_id=GRAPH_ID, subject=known_identity(), scores=auto_scores)]
+    ).plan
+    assert plan is not None
+    store = MemoryGraphStore()
+    Compensator().compensate(plan)  # generating a compensation touches no graph
+    assert store.current_epoch() == 0

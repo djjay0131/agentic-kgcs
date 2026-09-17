@@ -5,10 +5,14 @@ Instructions for AI agents working in this repository.
 <!-- BEGIN agentic-governance: repository layout -->
 ## Repository layout: two planes
 
-The source of truth for this rule is
-`~/code/agentic-governance/llm/governance/project-operating-system.md`
-§Repository Areas, and the decision behind it is
-`~/code/agentic-governance/llm/governance/adr/0001-llm-control-plane-docs-data-plane.md`.
+The source of truth for this rule is agentic-governance
+`llm/governance/project-operating-system.md` §Repository Areas, and the
+decision behind it is
+`llm/governance/adr/0001-llm-control-plane-docs-data-plane.md`. Both are
+paths **inside the canonical repo**: resolve them against the
+`Canon checkout` declared in `llm/governance/governance-delta.md`
+§Canon Location, or read them at
+<https://github.com/djjay0131/agentic-governance>.
 Where this file and §Repository Areas disagree, §Repository Areas
 wins. The paths below are the ones this repo declares in
 `llm/governance/governance-delta.md` §Repository Layout.
