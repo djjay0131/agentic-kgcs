@@ -1,5 +1,27 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 6, PR G): **Review API/queue/CLI + backlog/backpressure.**
+On branch `wave6/review-queue`, stacked on Wave 5. New package `src/kgcs/review/`:
+- `queue.py` — `PersistentReviewQueue` (passes `ReviewQueueContract`; swappable
+  `ReviewStore`: in-memory or atomic JSON-file; append-only history across
+  reloads) + typed `RetryableQueueError`/`PermanentQueueError` (law 15 — never
+  a silent drop).
+- `model.py` — `ReviewCase` enrichment (snapshot ref, proposed plan, adviser
+  assessments, risk/value, priority, SLA P1=24h/P2=7d/P3=30d, trace) in the
+  contract's opaque payload.
+- `operations.py` — `ReviewRouter`: a human decision routes through the SAME
+  `ConceptEvolutionPlanner` the auto path uses, so APPROVE yields a
+  byte-identical plan and SPLIT/RELABEL/MERGE/etc. map to the same planner
+  methods (law 14 — human & auto converge on one plan/executor/audit path).
+- `backlog.py` — `BacklogAnalyzer`/`QueueMetrics`/`BackpressureSignal`:
+  age/depth by source+entity-type, unresolved-cluster size, priority-inversion
+  + starving-high-value detection, machine-readable THROTTLE/QUARANTINE signal
+  for the KGIS seam (§7.7).
+- `cli.py` — stdlib-argparse `kgcs review` (list/show/resolve/history/backlog)
+  over an injected queue.
+Gates: 363 pytest (+30), ruff, strict mypy (42 files). ADR candidate 0014.
+NEXT: Wave 7 — semantic audit/replay + kg_eval metric integration.
+
 Update 2026-08-22 (Wave 5, PR F): **Evidence-driven re-curation (DG-1) +
 concept/ontology evolution (DG-3).** On branch `wave5/recuration`. New package
 `src/kgcs/recuration/`:
