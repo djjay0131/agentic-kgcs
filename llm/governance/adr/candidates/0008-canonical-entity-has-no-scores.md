@@ -1,6 +1,6 @@
 # ADR candidate 0008: `CanonicalEntity` carries no scores
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Deferred (adopter/upstream backlog — not a KGCS v1 blocker)
 Date: 2026-08-22
 Surfaced by: Wave 2 (ER 5a), `kgcs.er.features`
 
@@ -34,3 +34,9 @@ can weigh both sides symmetrically — noting this must not smuggle uncertainty
 into the canonical graph (ADR-0006/0011). It may instead be recovered from the
 entity's assertions' `authority`/scores rather than added to `CanonicalEntity`.
 Until resolved, canonical-side reliability is absent by design.
+
+## Disposition (v1 completion, 2026-09-17)
+
+ADOPTER — deferred to the adopter/upstream backlog; KGCS's local handling (injectable/honest-null) is correct for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

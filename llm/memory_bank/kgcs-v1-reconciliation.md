@@ -1,8 +1,13 @@
 # KGCS v1 — build reconciliation (Wave 9)
 
 Date: 2026-08-22
-Status: All nine build waves implemented as independently-reviewed, owner-ready
-**draft** PRs. Nothing merged; awaiting owner review and merge.
+Status: **SUPERSEDED by completion (2026-09-17).** All nine build PRs are now
+MERGED to `main` and KGCS v1 is formally complete; governance is v0.9.0. This
+document captured the pre-merge draft-PR state. For the current, authoritative
+completion record — contract reconciliation, ADR-candidate dispositions, Issue
+#2 re-disposition, and the definition-of-complete checklist — see
+[`../governance/kgcs-v1-completion-reconciliation.md`](../governance/kgcs-v1-completion-reconciliation.md).
+The pre-merge snapshot below is retained for history.
 
 This is the steward reconciliation for the orchestrated build
 (`llm/plans/2026-08-22-kgcs-v1-orchestrated-build.md`). It records what was

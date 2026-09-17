@@ -1,6 +1,6 @@
 # ADR candidate 0016: an executed compensation needs re-stamping against the current snapshot
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 8 (KGIS→KGCS end-to-end), `kgcs.executor.compensate`
 
@@ -36,3 +36,9 @@ entry that re-evaluates the snapshot guard as part of a deliberate rollback —
 so an executed rollback is ergonomic without hand-rebuilding preconditions,
 while still refusing a blind retry. Relates to ADR candidate 0003 (snapshot
 precondition enforcement) and 0010 (ClusterSnapshot vs Precondition).
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

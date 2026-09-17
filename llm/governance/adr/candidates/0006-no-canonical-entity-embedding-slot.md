@@ -1,6 +1,6 @@
 # ADR candidate 0006: no canonical name for an entity embedding
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Deferred (adopter/upstream backlog — not a KGCS v1 blocker)
 Date: 2026-08-22
 Surfaced by: Wave 2 (ER 5a), `kgcs.er.blocking` / `kgcs.er.features`
 
@@ -35,3 +35,9 @@ or a typed optional slot on the candidate for the canonical embedding plus its
 model id, so ER selects the embedding exactly rather than heuristically. This
 also lets calibration be keyed by embedding model version. Until then, treat
 embedding selection as best-effort.
+
+## Disposition (v1 completion, 2026-09-17)
+
+ADOPTER — deferred to the adopter/upstream backlog; KGCS's local handling (injectable/honest-null) is correct for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

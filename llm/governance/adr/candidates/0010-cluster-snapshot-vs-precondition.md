@@ -1,6 +1,6 @@
 # ADR candidate 0010: `ClusterSnapshot` and `Precondition(cluster_version)` model the same check twice
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 3 (cluster validation), `kgcs.er.cluster`
 
@@ -37,3 +37,9 @@ Consider a shared cluster-version value object (or a documented, tested
 validator and the executor consume one representation of the cluster-version
 guard rather than two that must be kept in sync. Relates to ADR candidate 0003
 (snapshot-level precondition enforcement at the executor).
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

@@ -1,6 +1,6 @@
 # ADR candidate 0001: `artifact` candidate has no curation operation type
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-07-17
 Surfaced by: Sprint 1 (deterministic curation core), `kgcs.planner`
 
@@ -56,3 +56,9 @@ artifacts, accounted for in `EngineResult`). Owner decision still required;
 carry forward to the executor work (Wave 1), which is where a
 `REGISTER_ARTIFACT`/artifact-sink destination would first have somewhere to
 land.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

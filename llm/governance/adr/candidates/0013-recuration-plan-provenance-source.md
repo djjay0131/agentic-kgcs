@@ -1,6 +1,6 @@
 # ADR candidate 0013: a re-curation plan's provenance is a trigger, not a candidate
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 5 (evidence-driven re-curation), `kgcs.recuration`
 
@@ -37,3 +37,9 @@ union provenance field — so a re-curation plan need not borrow `candidate_ids`
 Relates to the audit-lineage friction ([[0002-audit-record-lacks-candidate-lineage]]).
 Until then, treat a re-curation plan's `candidate_ids` as "affected refs", with
 the trigger as the authoritative provenance in `reversal_data`.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

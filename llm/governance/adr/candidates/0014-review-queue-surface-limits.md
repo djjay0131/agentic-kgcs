@@ -1,6 +1,6 @@
 # ADR candidate 0014: the `ReviewQueue` contract can't express typed outcomes or a typed review case
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 6 (review API/queue), `kgcs.review`
 
@@ -40,3 +40,9 @@ If the review surface proves cross-repo, consider a typed `ReviewQueue`
 outcome object (so callers branch without exceptions) and a first-class
 review-case surface on `ReviewItem` (or a typed variant) in `kg_contracts`.
 Until then, the payload convention + typed exceptions are the KGCS contract.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

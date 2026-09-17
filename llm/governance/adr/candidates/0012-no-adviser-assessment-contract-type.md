@@ -1,6 +1,6 @@
 # ADR candidate 0012: no contract home for an LLM adviser assessment
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-08-22
 Surfaced by: Wave 4 (LLM curation orchestrator), `kgcs.advisers`
 
@@ -41,3 +41,9 @@ cross-repo training/eval), add a semantic adviser-assessment record to
 block). This is the same underlying friction as the audit-lineage gap already
 logged — see [[0002-audit-record-lacks-candidate-lineage]]. Until then,
 `AdviserAssessment` stays KGCS-local, joined by trace id.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

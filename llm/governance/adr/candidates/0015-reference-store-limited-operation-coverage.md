@@ -1,6 +1,6 @@
 # ADR candidate 0015: the reference `MemoryGraphStore` applies only two operation types
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Open (retained — upstream kg_contracts/KGIS blocker)
 Date: 2026-08-22
 Surfaced by: Wave 8 (KGIS→KGCS end-to-end), `tests/kgcs/e2e_harness.py`
 
@@ -38,3 +38,9 @@ repo can execute and test the compensable operations against one shared
 reference adapter instead of each re-implementing a shim. Relates to ADR
 candidate 0001 (artifact has no operation type) — both are about the gap
 between planned and executable operations.
+
+## Disposition (v1 completion, 2026-09-17)
+
+RETAIN — still-open; resolution requires a kg_contracts/KGIS change (owner-owned). KGCS's local handling stands for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

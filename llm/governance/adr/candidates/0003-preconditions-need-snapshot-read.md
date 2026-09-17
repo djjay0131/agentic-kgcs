@@ -1,6 +1,6 @@
 # ADR candidate 0003: deterministic core cannot emit per-subject preconditions without a snapshot read
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
 Date: 2026-07-17
 Surfaced by: Sprint 1 (deterministic curation core), `kgcs.planner`
 
@@ -68,3 +68,9 @@ emitting the read-free `entity_version = 0` guard per `CREATE_IDENTITY` plus
 the plan-level snapshot guard; the executor is where enforcement lands.
 Option 2 (stamping observed `entity_version` from the read-capable resolution
 plane) is revisited in the ER waves. No contract change needed for v1.
+
+## Disposition (v1 completion, 2026-09-17)
+
+PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.

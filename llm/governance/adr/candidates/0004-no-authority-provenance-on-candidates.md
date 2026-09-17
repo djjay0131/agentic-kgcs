@@ -1,6 +1,6 @@
 # ADR candidate 0004: no authority provenance on candidates
 
-Status: Candidate (contract friction; not an accepted decision)
+Status: Open (retained — upstream kg_contracts/KGIS blocker)
 Date: 2026-07-17
 Surfaced by: Sprint 1 (deterministic curation core), `kgcs.planner`
 
@@ -52,3 +52,9 @@ signal that is not the producer. The recommendation is to revisit this
 candidate when curation profiles land (Wave 3) — a profile may supply the
 authority/entitlement that the candidate envelope does not — rather than
 mutating the frozen contract now. Owner decision still required.
+
+## Disposition (v1 completion, 2026-09-17)
+
+RETAIN — still-open; resolution requires a kg_contracts/KGIS change (owner-owned). KGCS's local handling stands for v1.
+
+See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.
