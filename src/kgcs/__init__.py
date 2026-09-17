@@ -412,4 +412,6 @@ __all__ = [
     "MetricProvider",
     "MetricSnapshot",
     "AuditMetricProvider",
+    "InMemoryEpochPublisher",
+    "InMemoryExecutionAuditSink",
 ]
