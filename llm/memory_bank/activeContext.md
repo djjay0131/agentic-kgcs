@@ -1,5 +1,33 @@
 # Active Context — agentic-kgcs
 
+Update 2026-08-22 (Wave 3, PR D): **Cluster validation + deterministic ER
+resolution policy + DG-5 curation profiles.** On branch `wave3/cluster-policy`,
+stacked on Wave 2 (ER). Completes the deterministic decision spine — the
+baseline that stands before any LLM.
+- `er/cluster.py` — `Cluster`/`ClusterSnapshot` (versioned, optimistic
+  concurrency), five `ClusterConstraint`s (temporal, unique-source,
+  mutually-exclusive, tenant, identity-authority), `ClusterValidator` that
+  validates the WHOLE prospective membership (all internal pairwise relations +
+  every constraint) so A~B, B~C, A⊥C never forms {A,B,C} (law 7);
+  deterministic `select_survivor`.
+- `profiles.py` (DG-5) — `IdentityAuthorityMode`
+  (OPEN/ADVISORY/CLIENT_AUTHORITATIVE), `ErMode`, `FalseMergeCostClass`,
+  `CurationProfile` (wraps the existing `ConfidencePolicy` — no alternate write
+  path), `ProfileRegistry`, factories incl. `projection_consumer_profile` and
+  `client_authoritative_profile`.
+- `er/resolution.py` — `ErAction` (8-way), `ErDecision`, `ErResolutionPolicy`:
+  routes on calibrated risk + consequence class + cluster validity + profile
+  (NOT a fixed similarity band); complete without any LLM. `to_route()` bridges
+  to the contract `AdjudicationRoute`. Wave-0 `policy.py` untouched.
+- **Issue #2 / law 13 (reject-only) enforced in depth:** a CLIENT_AUTHORITATIVE
+  identity never AUTO_LINK/SAME_AS/merges (full-sweep test) — at most
+  PROPOSE_LINK (POSSIBLY_SAME_AS); malformed → REJECT, never repair. Enforced
+  at both cluster (`IdentityAuthorityConstraint`) and policy layers.
+Gates: 201 pytest (+53), ruff, strict mypy (22 files). Surfaced 3 contract
+frictions → ADR candidates 0009–0011. NEXT: Wave 4 — bounded LLM curation
+orchestrator + specialist advisers (recorded/replay clients; deterministic
+baseline survives every LLM failure).
+
 Update 2026-08-22 (Wave 2, PR C): **Entity-resolution substrate (ER 5a).** On
 branch `wave2/er`, stacked on the Wave-0 core (sibling of PR B). New package
 `src/kgcs/er/`: `normalize` (deterministic normalization + identity rules —
