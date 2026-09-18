@@ -1,5 +1,32 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-18 (post-v1 defect fix): **ADR-0017 — identifier strength is
+entity-type relative.** Branch `fix/container-identifier-strength`, opened
+against tagged `v1.0.0` after an adopter probe. `DEFAULT_STRONG_NAMESPACES`
+contained `issn`/`isbn`, which name a *journal* and a *book* rather than a
+*work*: two different papers sharing only an ISSN scored p = 0.998383 and
+**AUTO_LINK even at HIGH** cost class (false-merge risk 0.001617 inside the
+documented 0.002 budget), and at STANDARD any two same-journal papers
+auto-linked. The symmetric defect also held — disjoint ISSNs made two records
+of one paper `mutually_exclusive`, blocking the cluster. Fix: strong set is now
+`{doi, orcid, vin}`; new `DEFAULT_CONTAINER_NAMESPACES` promotes `issn`/`isbn`
+to full strength only when *both* sides carry a container entity type, and
+otherwise emits an auditable `UNKNOWN` signal. Both injectable. Journal/book
+resolution is unchanged and now tested in both directions. **No existing test
+changed** — nothing in the suite encoded the old behaviour (435 → 454 passing,
++19 new). ADR candidate 0005 amended, not re-dispositioned. Warrants a **minor**
+release, not a patch: default resolution outcomes change.
+
+Four further findings were verified against `main` during the same pass and
+are **not** fixed here (each deserves its own issue): (1) `ErRoutingThresholds`
+is absent from `ReplayInputs` and its `version` is stamped nowhere — `replay()`
+substitutes defaults, a determinism hole (HIGH); (2) `ClusterValidation` can be
+`valid=True` with `checked_pairs=0`, and the gate reads only `.valid`, never
+`pairwise_complete` — unvalidated membership can auto-link (HIGH); (3)
+`calibrate_logistic` on an empty golden set returns an all-zero model without
+raising, and `CalibratedMatcher` cannot signal it is uncalibrated — every pair
+scores exactly 0.5 (MEDIUM); (4) no `py.typed`, no `LICENSE` (LOW).
+
 Update 2026-09-17 (wrap-up): **KGCS v1 build fully closed out.** All build PRs
 merged (#5, #10–#17) + the completion PR (#27); PR #18 closed as executed;
 Issue #2 re-dispositioned (kept open — items 1/4 KGIS/contract-owned). Stale

@@ -24,9 +24,10 @@ contract does not carry.
 
 ## Local workaround
 
-`kgcs.er` ships a `DEFAULT_STRONG_NAMESPACES` set (doi, orcid, vin, isbn, …)
-and treats agreement/contradiction on those namespaces as strong signals; the
-set is injectable so an adopter can extend it. This is a KGCS-local heuristic,
+`kgcs.er` ships a `DEFAULT_STRONG_NAMESPACES` set (doi, orcid, vin) plus a
+`DEFAULT_CONTAINER_NAMESPACES` mapping (issn, isbn → the entity types they
+actually name) and treats agreement/contradiction on those namespaces as strong
+signals; both are injectable so an adopter can extend or replace them. This is a KGCS-local heuristic,
 honest about its provenance, but it duplicates knowledge that arguably belongs
 with the identifier definition.
 
@@ -43,3 +44,18 @@ configurable heuristic, not authority.
 ADOPTER — deferred to the adopter/upstream backlog; KGCS's local handling (injectable/honest-null) is correct for v1.
 
 See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.
+
+## Amendment (2026-09-18) — ADR-0017
+
+The *contents* of the local list were defective, independently of this
+candidate's status. `issn` and `isbn` were in `DEFAULT_STRONG_NAMESPACES`, so
+two different papers sharing a journal auto-linked at p = 0.998 even at HIGH
+cost. [ADR-0017](../0017-identifier-strength-is-entity-type-relative.md) makes
+identifier strength relative to the entity type and scopes container
+identifiers to the containers they name.
+
+This candidate's disposition is unchanged: the taxonomy is still KGCS-local
+and still a heuristic rather than contract authority. ADR-0017 in fact
+*sharpens* the case for the upstream improvement sketched above — the missing
+contract marker is not merely a uniqueness class but a statement of **which
+entity type a namespace identifies**.

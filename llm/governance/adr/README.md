@@ -6,7 +6,13 @@ founding + contract decisions. Use `0000-template.md`.
 
 ## Index
 
-No standalone accepted local ADR files yet. At **v1 completion (2026-09-17)**
+- [0017 — identifier strength is entity-type relative; container identifiers are scoped](0017-identifier-strength-is-entity-type-relative.md) — Proposed
+
+Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`
+and ten of those carry accepted decisions in place; reusing a candidate number
+for an unrelated decision would make citations ambiguous.
+
+At **v1 completion (2026-09-17)**
 ten contract-friction candidates were **accepted as durable KGCS-local
 decisions in place** (their `Status` reads *Accepted*): candidates 0001, 0002,
 0003, 0009, 0010, 0011, 0012, 0013, 0014, 0016. The full reconciliation is

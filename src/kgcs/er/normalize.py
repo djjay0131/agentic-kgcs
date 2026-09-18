@@ -29,6 +29,7 @@ import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from kg_contracts.assertions import CanonicalEntity
@@ -301,10 +302,60 @@ class DefaultNormalizer:
 # Identity rules
 # ---------------------------------------------------------------------------
 
-DEFAULT_STRONG_NAMESPACES: frozenset[str] = frozenset({"doi", "orcid", "isbn", "vin", "issn"})
-"""Namespaces whose values are strong (near-unique) identifiers. Sharing one
-is powerful positive evidence; carrying disjoint ones is a contradiction. This
-is a *default* — pass your own set to `SharedStrongIdentifierRule` per domain."""
+DEFAULT_STRONG_NAMESPACES: frozenset[str] = frozenset({"doi", "orcid", "vin"})
+"""Namespaces that identify *the entity they are attached to*, near-uniquely.
+
+Sharing one is powerful positive evidence; carrying disjoint ones is a
+contradiction. Membership turns on a single question — **does a value in this
+namespace name one individual thing, the thing carrying it?** A DOI names one
+work, an ORCID one person, a VIN one vehicle, so each is strong wherever it
+appears.
+
+`issn` and `isbn` deliberately are **not** here. An ISSN names a *journal* and
+an ISBN a *book* — the container a work was published in, not the work. Two
+different papers in the same journal share an ISSN, so treating it as strong
+makes "same venue" read as "same paper": a false-merge generator on any corpus
+of papers. Symmetrically, one paper carrying a print ISSN and a reprint of it
+carrying the electronic ISSN would read as a *contradiction* and block a merge
+that should happen. They stay meaningful evidence for the entities they really
+do identify — see `DEFAULT_CONTAINER_NAMESPACES`.
+
+This is a *default* — pass your own set to `SharedStrongIdentifierRule` per
+domain.
+"""
+
+DEFAULT_CONTAINER_NAMESPACES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "issn": frozenset({"journal", "serial", "periodical", "publicationvenue", "venue"}),
+        "isbn": frozenset({"book", "monograph", "bookedition"}),
+    }
+)
+"""Namespaces that are strong *only* for the entity type they actually name.
+
+A container identifier is near-unique for its container and merely descriptive
+for anything published inside it. So strength here is a property of the
+**(namespace, entity_type)** pair, not of the namespace alone: an ISSN shared
+by two `Journal` entities is exactly as conclusive as a shared DOI is for two
+papers, while the same ISSN shared by two `Paper` entities says only that they
+appeared in the same place.
+
+`SharedStrongIdentifierRule` promotes a namespace listed here to strong for one
+pair when *both* sides carry an entity type in its set (compared casefolded,
+ignoring separators — `"Journal"`, `"journal"` and `"publication_venue"` all
+match). Otherwise it emits an explicit `UNKNOWN` signal recording that the
+identifier was seen and deliberately not treated as strong, so the suppression
+is auditable rather than invisible.
+
+The type vocabulary is a *default*, not authority (ADR candidate 0005: the
+contract carries no strong-identifier taxonomy). An adopter whose types are
+named differently passes its own mapping; passing `{}` disables container
+promotion entirely.
+"""
+
+
+def _type_key(entity_type: str) -> str:
+    """Casefold an entity type and drop separators, for tolerant type matching."""
+    return "".join(ch for ch in entity_type.casefold() if ch.isalnum())
 
 
 @runtime_checkable
@@ -326,21 +377,65 @@ class SharedStrongIdentifierRule:
     namespace and they disagree — e.g. two different DOIs). A namespace absent
     from either side yields no signal at all (silence, not `UNKNOWN` noise).
     The rule returns evidence for the matcher; it decides nothing.
+
+    **Strength is relative to the entity type.** A namespace only earns strong
+    treatment when it identifies the entity carrying it. `strong_namespaces`
+    holds the namespaces that do so wherever they appear (DOI, ORCID, VIN);
+    `container_namespaces` maps a *container* namespace to the entity types it
+    genuinely identifies, and it is promoted to strong only when both sides of
+    the pair are one of those types. A container identifier seen on any other
+    type yields an explicit `UNKNOWN` signal — auditable evidence that it was
+    observed and deliberately not weighed as identity — which the feature
+    extractor neither counts as agreement nor as contradiction.
     """
 
     name = "shared_strong_identifier"
 
-    def __init__(self, *, strong_namespaces: frozenset[str] = DEFAULT_STRONG_NAMESPACES) -> None:
+    def __init__(
+        self,
+        *,
+        strong_namespaces: frozenset[str] = DEFAULT_STRONG_NAMESPACES,
+        container_namespaces: Mapping[str, frozenset[str]] = DEFAULT_CONTAINER_NAMESPACES,
+    ) -> None:
         self._strong = strong_namespaces
+        self._containers = {
+            namespace: frozenset(_type_key(t) for t in types)
+            for namespace, types in container_namespaces.items()
+        }
+
+    def _promoted(self, left: NormalizedEntity, right: NormalizedEntity) -> frozenset[str]:
+        """Container namespaces that are strong for *this* pair's entity types."""
+        left_type, right_type = _type_key(left.entity_type), _type_key(right.entity_type)
+        return frozenset(
+            namespace
+            for namespace, types in self._containers.items()
+            if left_type in types and right_type in types
+        )
 
     def evaluate(
         self, left: NormalizedEntity, right: NormalizedEntity
     ) -> tuple[IdentitySignal, ...]:
         signals: list[IdentitySignal] = []
-        for namespace in sorted(self._strong):
+        promoted = self._promoted(left, right)
+        demoted = set(self._containers) - promoted - self._strong
+        for namespace in sorted(self._strong | promoted | demoted):
             left_values = set(left.identifiers.get(namespace, ()))
             right_values = set(right.identifiers.get(namespace, ()))
             if not left_values or not right_values:
+                continue
+            if namespace in demoted:
+                signals.append(
+                    IdentitySignal(
+                        rule=self.name,
+                        namespace=namespace,
+                        agreement=FeatureAgreement.UNKNOWN,
+                        detail=(
+                            f"{namespace} identifies a container, not a "
+                            f"{left.entity_type!r}/{right.entity_type!r}; "
+                            "not weighed as identity evidence"
+                        ),
+                    )
+                )
                 continue
             shared = left_values & right_values
             if shared:
