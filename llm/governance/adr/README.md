@@ -6,7 +6,9 @@ founding + contract decisions. Use `0000-template.md`.
 
 ## Index
 
-- [0017 — identifier strength is entity-type relative; container identifiers are scoped](0017-identifier-strength-is-entity-type-relative.md) — Proposed
+| ADR | Title | Status |
+|---|---|---|
+| [0017](0017-identifier-strength-is-entity-type-relative.md) | Identifier strength is entity-type relative; scoped identifiers | Proposed |
 
 Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`
 and ten of those carry accepted decisions in place; reusing a candidate number

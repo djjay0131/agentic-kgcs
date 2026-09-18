@@ -1,25 +1,49 @@
 # Active Context — agentic-kgcs
 
-Update 2026-09-18 (post-v1 defect fix): **ADR-0017 — identifier strength is
-entity-type relative.** Branch `fix/container-identifier-strength`, opened
-against tagged `v1.0.0` after an adopter probe. `DEFAULT_STRONG_NAMESPACES`
-contained `issn`/`isbn`, which name a *journal* and a *book* rather than a
-*work*: two different papers sharing only an ISSN scored p = 0.998383 and
-**AUTO_LINK even at HIGH** cost class (false-merge risk 0.001617 inside the
-documented 0.002 budget), and at STANDARD any two same-journal papers
-auto-linked. The symmetric defect also held — disjoint ISSNs made two records
-of one paper `mutually_exclusive`, blocking the cluster. Fix: strong set is now
-`{doi, orcid, vin}`; new `DEFAULT_CONTAINER_NAMESPACES` promotes `issn`/`isbn`
-to full strength only when *both* sides carry a container entity type, and
-otherwise emits an auditable `UNKNOWN` signal. Both injectable. Journal/book
-resolution is unchanged and now tested in both directions. **No existing test
-changed** — nothing in the suite encoded the old behaviour (435 → 454 passing,
-+19 new). ADR candidate 0005 amended, not re-dispositioned. Warrants a **minor**
-release, not a patch: default resolution outcomes change.
+Update 2026-09-18 (post-v1 defect fix, rev 2 after review): **ADR-0017 —
+identifier strength is entity-type relative.** Branch
+`fix/container-identifier-strength` (PR #30), opened against tagged `v1.0.0`
+after an adopter probe. `DEFAULT_STRONG_NAMESPACES` held `issn`/`isbn`/`orcid`,
+none of which names a *work*: two different papers sharing only an ISSN scored
+p = 0.998383 and **AUTO_LINK even at HIGH** cost (risk 0.001617 inside the
+documented 0.002 budget); two different papers by one author sharing only an
+ORCID scored identically. Independent review then found three more instances of
+the same fault, all reproduced and now fixed: `venue` in the first revision's
+ISSN subject set let two different conferences sharing the LNCS series ISSN
+auto-link at p = 0.998028; one journal's print vs electronic ISSN (and one
+book's ISBN-10 vs ISBN-13) read as `CONTRADICT`, scoring p = 0.000001 and
+getting the cluster rejected — a defect the first revision had *pinned green*
+with a test; and a shared ISSN still moved probability through
+`attribute_rarity` (weight +2.0, 0.604806 → 0.918754) after the signal channel
+had refused it.
 
-Four further findings were verified against `main` during the same pass and
-are **not** fixed here (each deserves its own issue): (1) `ErRoutingThresholds`
-is absent from `ReplayInputs` and its `version` is stamped nowhere — `replay()`
+Fix, two axes, both data: `DEFAULT_STRONG_NAMESPACES = {doi, vin}` (strong for
+whatever carries them); new `NamespaceScope` + `DEFAULT_SCOPED_NAMESPACES`
+carrying, per namespace, the entity types it *names* and whether disagreement
+is decisive — `orcid → person/author/… contradicts=True`, `issn →
+journal/serial/periodical contradicts=False`, `isbn → book/monograph/…
+contradicts=False`. Off-subject use emits an auditable `UNKNOWN`;
+`_attribute_rarity` now excludes suppressed namespaces. All injectable;
+`strong_namespaces` membership outranks a scope (the one-arg escape hatch).
+Journal/book/person resolution preserved exactly (a Journal pair sharing an
+ISSN measures p = 0.996727 before and after). `FEATURE_KEYS` and `to_vector`
+untouched, so replay stays bit-identical. **No pre-existing test changed** —
+nothing in the suite encoded the old behaviour (435 → 468 passing, +33 new).
+ADR candidate 0005 amended, not re-dispositioned. Warrants a **minor** release,
+not a patch: default resolution outcomes change, and the *value* of an exported
+constant changed, so even an adopter who explicitly pinned
+`strong_namespaces=DEFAULT_STRONG_NAMESPACES` is affected.
+
+Known remaining exposure, deliberately not fixed in that PR and filed as
+follow-ups: `doi` has the mirror problem (a preprint DOI vs a published DOI are
+disjoint, so `CONTRADICT` blocks a merge that should happen — but §7.4 names
+"two different DOIs" as its canonical contradiction, so flipping it is a
+spec-level call); blocking still fans out quadratically on a shared ISSN; and
+the release-version bump itself.
+
+Four further findings were verified against `main` during the same pass and are
+**not** fixed there (each deserves its own issue): (1) `ErRoutingThresholds` is
+absent from `ReplayInputs` and its `version` is stamped nowhere — `replay()`
 substitutes defaults, a determinism hole (HIGH); (2) `ClusterValidation` can be
 `valid=True` with `checked_pairs=0`, and the gate reads only `.valid`, never
 `pairwise_complete` — unvalidated membership can auto-link (HIGH); (3)

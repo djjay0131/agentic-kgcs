@@ -1,4 +1,4 @@
-# ADR-0017: Identifier strength is relative to the entity type, and container identifiers are scoped
+# ADR-0017: Identifier strength is entity-type relative; scoped identifiers
 
 Status: Proposed
 Date: 2026-09-18
@@ -46,55 +46,99 @@ Two readings of that table matter:
    merge is expensive — two unrelated survey papers still auto-linked, inside
    a documented 0.002 false-merge risk budget.
 
-### The symmetric defect
-
-The same rule emits `CONTRADICT` on *disjoint* ISSNs, which sets
-`mutually_exclusive` and makes `MutuallyExclusiveAttributeConstraint` reject
-the cluster outright. So one record of a paper carrying a print ISSN and
-another carrying the electronic ISSN (or the journal ISSN versus a preprint
-venue's) was positive evidence that they are **different papers**. The bad
-default generates false non-merges as well as false merges.
-
 ### The general fault
 
-An ISSN names a *journal*; an ISBN names a *book*. Neither names a *work*.
-The defect is not that these namespaces are low-quality — as identifiers they
-are excellent, and near-unique for the things they actually identify. The
-defect is that identifier strength was modelled as a property of the
-**namespace**, when it is a property of the **(namespace, entity type)** pair:
-an identifier is strong evidence of identity only for the entity it names, and
-is mere container metadata on anything else. `doi`, `orcid` and `vin` each name
-one individual thing (a work, a person, a vehicle), so they are strong wherever
-they legitimately appear; `issn` and `isbn` name containers, so on the contents
-of those containers they are not.
+An ISSN names a *journal*; an ISBN names a *book*; an ORCID names a *person*.
+None of them names a *work*. The defect is not that these namespaces are
+low-quality — as identifiers they are excellent, and near-unique for the things
+they actually identify. The defect is that identifier strength was modelled as
+a property of the **namespace**, when it is a property of the **(namespace,
+entity type)** pair: an identifier is identity evidence only for the kind of
+thing it names, and is mere metadata on anything else. An ISSN on a `Paper`
+says where it appeared; an ORCID on a `Paper` says who wrote it. Neither says
+*which* paper it is.
 
 This is wrong for every corpus of published works, not only for this
 portfolio's paper corpus, so it is a platform defect rather than adopter
 configuration.
 
+### A second axis, found in review: disagreement is not always decisive
+
+The rule also emitted `CONTRADICT` on *disjoint* values, setting
+`mutually_exclusive` and causing `MutuallyExclusiveAttributeConstraint` to
+reject the cluster outright. That is correct only where the issuing registry
+intends **one value per subject**. It does not hold for the container
+namespaces:
+
+- A journal normally carries a **print ISSN and an electronic ISSN** — which is
+  exactly why ISSN-L was created. JMLR's `1532-4435` and `1533-7928` are one
+  journal; pre-fix they scored **p = 0.000001**, `RETAIN_SEPARATE`, cluster
+  rejected.
+- A book normally carries an **ISBN-10 and an ISBN-13** (a checksum
+  re-encoding of each other) plus a distinct ISBN per format. `0201896834` and
+  `9780201896831` are one book; same result.
+
+So the first revision of this change, which scoped ISSN/ISBN strength down to
+`Journal`/`Book`, *concentrated* this false-non-merge risk onto exactly the
+entity types where multi-valued identifiers are the norm. Strength therefore
+needs two axes, not one: **what a namespace names**, and **whether the registry
+issues one value per named thing**.
+
 ## Decision
 
-1. `DEFAULT_STRONG_NAMESPACES` becomes `{doi, orcid, vin}` — the namespaces
-   that identify the entity carrying them, wherever they appear. The
-   docstring states that membership test explicitly, so the next namespace
-   added has to answer it.
-2. A new `DEFAULT_CONTAINER_NAMESPACES` maps a container namespace to the
-   entity types it genuinely identifies — `issn → {journal, serial,
-   periodical, publicationvenue, venue}`, `isbn → {book, monograph,
-   bookedition}`. `SharedStrongIdentifierRule` promotes such a namespace to
-   full strength (both `AGREE` and `CONTRADICT`) for a pair **only when both
-   sides carry one of those entity types**, compared casefolded and ignoring
-   separators.
-3. On any other entity type, a shared or disjoint container identifier yields
-   an explicit `UNKNOWN` `IdentitySignal` naming the namespace and the reason.
-   `UNKNOWN` is already the honest-null value: the feature extractor counts it
-   as neither agreement nor contradiction, and the cluster constraint ignores
-   it. The suppression is therefore recorded in the evidence trail rather than
-   being invisible.
-4. Both the strong set and the container mapping stay constructor-injectable.
-   `container_namespaces={}` disables promotion; an adopter who genuinely
-   wants the old behaviour passes `strong_namespaces=DEFAULT_STRONG_NAMESPACES
-   | {"issn"}` and gets it explicitly.
+Identifier strength is modelled on both axes, as data.
+
+1. `DEFAULT_STRONG_NAMESPACES` becomes `{doi, vin}` — namespaces strong for
+   *whatever* entity carries them, because their subject type is too open to
+   enumerate (a DOI names any citable work: paper, dataset, chapter, software;
+   a VIN names a vehicle). The docstring states the membership test explicitly,
+   so the next namespace added has to answer it.
+2. A new `NamespaceScope` model carries `subjects` (the entity types a
+   namespace names, normalized by the now-exported `_type_key`) and
+   `contradicts` (whether disjoint values are positive evidence of difference).
+3. `DEFAULT_SCOPED_NAMESPACES` maps the type-bound namespaces:
+
+   | namespace | subjects | `contradicts` |
+   |---|---|---|
+   | `orcid` | person, author, researcher, contributor, creator | `True` |
+   | `issn` | journal, serial, periodical | `False` |
+   | `isbn` | book, monograph, bookedition | `False` |
+
+   `SharedStrongIdentifierRule` treats a scoped namespace as strong for a pair
+   only when **both** sides carry one of its subjects.
+4. On any other entity type, a shared or disjoint scoped identifier yields an
+   explicit `UNKNOWN` `IdentitySignal` naming the namespace, its subjects, and
+   the observed types. `UNKNOWN` is already the honest-null value: the feature
+   extractor counts it as neither agreement nor contradiction, and the cluster
+   constraint ignores it. The suppression is therefore recorded in the evidence
+   trail rather than being invisible.
+5. `contradicts=False` means a namespace can reach `AGREE` but never
+   `CONTRADICT`: agreement still proves identity while disagreement proves
+   nothing. Disjoint values yield `UNKNOWN` with a detail saying why.
+6. `DefaultFeatureExtractor._attribute_rarity` now excludes namespaces the
+   rules suppressed with an `UNKNOWN` signal. Without this the same shared ISSN
+   re-entered the score through `attribute_rarity` (weight `+2.0`) after the
+   signal channel had refused it — measured at p = 0.918754 versus 0.604806
+   with a `rarity_index` injected. Namespaces the rules say nothing about are
+   still counted: rarity is precisely the channel for a shared *weak*
+   identifier, and scoping must not gut it.
+7. Both the strong set and the scope mapping stay constructor-injectable.
+   `scoped_namespaces={}` disables scoping; membership in `strong_namespaces`
+   outranks any scope for the same namespace, which is the one-argument escape
+   hatch for an adopter who knows its ingest attaches a namespace only to the
+   entity it names.
+
+### Why `venue` and `conference` are not ISSN subjects
+
+The first revision listed `venue` and `publicationvenue` as ISSN subjects.
+Review showed this reintroduced the original defect one type over: a
+proceedings **series** carries a single ISSN across unrelated conferences —
+LNCS `0302-9743`, CEUR-WS `1613-0073`, PMLR `2640-3498` — and conference names
+share heavy boilerplate ("international conference on …"), so `name_similarity`
+reliably clears the auto-link floor. Two different conferences typed `Venue`
+sharing the LNCS ISSN measured **p = 0.998028, AUTO_LINK at HIGH**. An ISSN
+identifies a *serial*, and a venue is not reliably a serial. Only `journal`,
+`serial` and `periodical` are subjects.
 
 ## Rationale
 
@@ -102,23 +146,29 @@ The scoping rule is the only option that fixes the false merge *and* keeps the
 evidence it destroys. A shared ISSN between two `Journal` entities is exactly
 as conclusive as a shared DOI is between two papers; deleting `issn` from the
 defaults would have thrown that away to fix an unrelated case, and would have
-left the same trap for the next container-shaped namespace someone adds.
+left the same trap for the next type-bound namespace someone adds. The `orcid`
+case proves the point: it was already in the strong set, already wrong for the
+same reason, and the mechanism absorbed it as three lines of data rather than
+new code.
 
-It also matches the module's stated discipline. `normalize.py` already insists
-that identity rules produce *explainable evidence*, never silent merges, and
-that absent evidence is `UNKNOWN` rather than a fabricated verdict. "This
-identifier was present and deliberately not weighed, because it does not name
-this kind of entity" is an evidence statement of exactly that shape.
+The two-axis model also matches the module's stated discipline. `normalize.py`
+already insists that identity rules produce *explainable evidence*, never
+silent merges, and that absent evidence is `UNKNOWN` rather than a fabricated
+verdict. "This identifier was present and deliberately not weighed, because it
+does not name this kind of entity" and "these values differ, but one journal
+legitimately holds several" are both evidence statements of exactly that shape.
 
 The `UNKNOWN` signal is safe by construction: `_identifier_agreement` returns
 `AGREE` only if some signal is `AGREE` and `CONTRADICT` only if some signal is
 `CONTRADICT`, so an `UNKNOWN` cannot move a probability; and
-`MutuallyExclusiveAttributeConstraint` reacts only to `CONTRADICT`. It changes
-the audit trail, not the arithmetic.
+`MutuallyExclusiveAttributeConstraint` reacts only to `CONTRADICT`. With the
+`attribute_rarity` filter added, the claim that a suppressed identifier is "not
+weighed as identity evidence" is now true of the whole pipeline rather than of
+one channel.
 
-Direction of change is conservative in the sense the gate is documented to be:
-every affected pair moves *away* from auto-linking and toward gathering
-evidence, except journal-on-journal matching, which is unchanged.
+Replay comparability is preserved: `FEATURE_KEYS` and `PairFeatures.to_vector`
+are untouched, and `replay()` re-routes a *stored* `MatchResult` without
+re-extracting features, so previously recorded decisions replay bit-identically.
 
 ## Alternatives Considered
 
@@ -129,7 +179,8 @@ correct behaviour: it silently downgrades the one case where these identifiers
 *are* near-conclusive (resolving journals and books), and it leaves the
 underlying model — strength as a property of the namespace alone — intact, so
 the same bug returns the moment someone adds `issn` back for venue resolution
-or introduces another container namespace.
+or introduces another type-bound namespace. The `orcid` finding confirms this
+would have been the wrong call.
 
 ### Alternative 2 — reclassify them as weak / corroborating evidence
 
@@ -150,46 +201,88 @@ what makes the old default indefensible rather than defensible. A default that
 is wrong for every corpus of published works is not rescued by being
 overridable; the adopters who most need the correction are the ones least
 likely to know they need it. Configurability is retained (and extended to the
-container mapping) — it is just not the fix.
+scope mapping) — it is just not the fix.
+
+### Alternative 4 — make `contradicts` value-count-sensitive instead of a flag
+
+Considered for the ISSN/ISBN case: emit `CONTRADICT` only when both sides are
+*single-valued* and disjoint, on the theory that a record listing one ISSN has
+asserted it exclusively. Rejected as a false inference — a record carrying only
+the print ISSN has not asserted the absence of an e-ISSN, it has simply not
+listed it, which is the overwhelmingly common case in practice. The flag states
+the registry's actual semantics; the value count states only how complete one
+record happens to be.
 
 ## Consequences
 
 ### Positive
 
 - Two distinct papers sharing only an ISSN can no longer auto-link at any cost
-  class; the measured worst case falls from p = 0.998383 to 0.6048.
-- Two records of one paper carrying different ISSNs are no longer declared
-  mutually exclusive, so the cluster constraint stops blocking legitimate
-  merges.
-- ISSN/ISBN matching for journals and books is unchanged and now explicitly
-  tested in both directions.
+  class; the measured worst case falls from p = 0.998383 to 0.604806.
+- Two different papers by the same author sharing only an ORCID fall from
+  p = 0.998383 / AUTO_LINK to 0.604806 / `GATHER_MORE_EVIDENCE`.
+- Two different conferences sharing a proceedings-series ISSN fall from
+  p = 0.998028 / AUTO_LINK to 0.556401 / `GATHER_MORE_EVIDENCE`.
+- One journal's print and electronic ISSNs, and one book's ISBN-10 and
+  ISBN-13, no longer contradict: p = 0.000001 / cluster-rejected becomes the
+  score the pair would have had with no identifier at all, and the cluster
+  passes.
+- A suppressed identifier cannot re-enter through `attribute_rarity`.
+- ISSN/ISBN matching for journals and books, and ORCID matching for people, are
+  unchanged (a `Journal` pair sharing an ISSN measures p = 0.996727 before and
+  after) and are now explicitly tested in both directions.
 - The membership rule for the strong set is written down, so the next addition
   is a decision rather than a reflex.
 
 ### Negative / Tradeoffs
 
-- The default now embeds a small entity-type vocabulary (`journal`, `book`, …).
-  That is more domain knowledge in KGCS than the namespace list alone carried,
-  and it is unavoidable if scoped strength is to work out of the box. It stays
-  a heuristic, not authority — ADR candidate 0005's framing is unchanged — and
-  an adopter with a different type vocabulary passes its own mapping.
-- An adopter whose `Journal` entities are typed something unrecognised loses
-  ISSN strength silently until it supplies a mapping. The `UNKNOWN` signal
-  makes that visible in the evidence trail rather than merely absent.
-- `IdentitySignal` output is more verbose for container identifiers on
-  non-container types.
+- The default now embeds a small entity-type vocabulary (`journal`, `book`,
+  `person`, …). That is more domain knowledge in KGCS than the namespace list
+  alone carried, and it is unavoidable if scoped strength is to work out of the
+  box. It stays a heuristic, not authority — ADR candidate 0005's framing is
+  unchanged — and an adopter with a different type vocabulary passes its own
+  mapping.
+- An adopter whose `Journal` or `Person` entities are typed something
+  unrecognised loses strength silently until it supplies a mapping. The
+  `UNKNOWN` signal makes that visible in the evidence trail rather than merely
+  absent.
+- `IdentitySignal` output is more verbose for scoped identifiers on
+  non-subject types.
+- Blocking is unchanged and still fans out quadratically on a shared ISSN
+  (`ExactIdentifierChannel.block_keys` emits a key per identifier), so every
+  pair of papers in a journal is still *proposed*. Those pairs now reliably
+  produce `UNKNOWN` and are wasted work. Blocking is deliberately recall-biased
+  so this is not a correctness bug, but the cost is real on a bibliographic
+  corpus — see the follow-up issue.
 
 ### Risks
 
-- Behaviour change on an adopter that (knowingly or not) relied on
-  ISSN-driven auto-linking: previously auto-linked pairs now route to
+- Behaviour change on an adopter that (knowingly or not) relied on ISSN- or
+  ORCID-driven auto-linking: previously auto-linked pairs now route to
   `GATHER_MORE_EVIDENCE` or `LLM_ASSESS`, increasing review volume. This is
   the intended correction — those merges were the defect — but it will show up
   as a throughput change, not only as a quality change.
+- **The *value* of an exported constant changed.** An adopter who explicitly
+  wrote `SharedStrongIdentifierRule(strong_namespaces=DEFAULT_STRONG_NAMESPACES)`
+  believing they had pinned behaviour silently gets the new set. Source-
+  compatible, outcome-incompatible — the careful adopter is affected exactly
+  like the default one, and only a release note reaches them.
 - `v1.0.0` is tagged, and this changes default resolution behaviour. It is a
-  defect fix, not a feature, but it is not source-compatible in *outcome* and
-  should be released as a minor version with the change called out, not as a
-  patch.
+  defect fix, not a feature, but it should be released as a **minor** version
+  with the change called out, not as a patch.
+
+### Known remaining exposure (deliberately not fixed here)
+
+- **`doi` has the mirror problem.** A preprint DOI and a published DOI name the
+  *same* work but are disjoint, so `CONTRADICT` hard-blocks the merge — the
+  same class as the ISSN/ISBN case above. It is not fixed here because the
+  design spec §7.4 names "two different DOIs" as its canonical example of a
+  contradiction and an existing test pins that behaviour; flipping it is a
+  spec-level decision, not a defect fix. Tracked as a follow-up issue.
+- **Any namespace an ingester attaches to something it does not name.** Whether
+  the membership test holds is partly a property of the ingest pipeline, not
+  only of the namespace. `DEFAULT_SCOPED_NAMESPACES` fixes the three known
+  cases; a novel one would need the adopter to declare it.
 
 ## Impacted Areas
 
@@ -215,7 +308,9 @@ container mapping) — it is just not the fix.
 
 ## Related Issues / PRs
 
-- PR: `fix/container-identifier-strength`.
+- PR #30 (`fix/container-identifier-strength`) — this change.
+- Follow-ups filed from PR #30 review: release-version bump; DOI
+  preprint-vs-published contradiction; ISSN blocking fan-out.
 
 ## Supersedes
 

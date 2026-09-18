@@ -35,7 +35,7 @@ from typing import Protocol, runtime_checkable
 from kg_contracts.assertions import CanonicalEntity
 from kg_contracts.candidates import EntityCandidate, Representation
 from kg_contracts.identity import parse_identity_id
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # A normalizable source is either a proposed identity (`EntityCandidate`) or an
 # already-accepted one (`CanonicalEntity`); ER runs the same substrate over
@@ -302,60 +302,117 @@ class DefaultNormalizer:
 # Identity rules
 # ---------------------------------------------------------------------------
 
-DEFAULT_STRONG_NAMESPACES: frozenset[str] = frozenset({"doi", "orcid", "vin"})
-"""Namespaces that identify *the entity they are attached to*, near-uniquely.
+def _type_key(entity_type: str) -> str:
+    """Casefold an entity type and drop separators, for tolerant type matching.
+
+    `"Journal"`, `"journal"` and `"publication_journal"`-style variants all
+    reduce to the same key. Exported so a consumer reading
+    `DEFAULT_SCOPED_NAMESPACES` normalizes entity types the same way the rule
+    does (the subjects in that mapping are already stored normalized).
+    """
+    return "".join(ch for ch in entity_type.casefold() if ch.isalnum())
+
+
+class NamespaceScope(BaseModel):
+    """What a namespace identifies, and whether disagreement in it is decisive.
+
+    Strength is not a property of a namespace alone. It is a property of the
+    **(namespace, entity type)** pair — an identifier is identity evidence only
+    for the kind of thing it names — and of whether the issuing registry
+    intends *one* value per subject.
+
+    - `subjects` — the entity types this namespace identifies, stored
+      normalized by `_type_key`. `SharedStrongIdentifierRule` treats the
+      namespace as strong for a pair only when *both* sides carry one of them.
+    - `contradicts` — whether disjoint values are positive evidence the two
+      entities differ. True where the registry issues one value per subject
+      (an ORCID per person). False where one subject legitimately carries
+      several (a journal has a print *and* an electronic ISSN — which is why
+      ISSN-L exists; a book has an ISBN-10 and an ISBN-13, and another pair per
+      format). For those, agreement is still conclusive while disagreement
+      means nothing, so the rule emits `AGREE` or stays honest with `UNKNOWN`
+      but never manufactures a `CONTRADICT`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    subjects: frozenset[str]
+    contradicts: bool = True
+
+    @field_validator("subjects", mode="after")
+    @classmethod
+    def _normalize_subjects(cls, value: frozenset[str]) -> frozenset[str]:
+        return frozenset(_type_key(subject) for subject in value)
+
+    def names(self, left_type: str, right_type: str) -> bool:
+        """True iff this namespace identifies *both* entities' types."""
+        return _type_key(left_type) in self.subjects and _type_key(right_type) in self.subjects
+
+
+DEFAULT_STRONG_NAMESPACES: frozenset[str] = frozenset({"doi", "vin"})
+"""Namespaces strong for *whatever* entity carries them, near-uniquely.
 
 Sharing one is powerful positive evidence; carrying disjoint ones is a
-contradiction. Membership turns on a single question — **does a value in this
-namespace name one individual thing, the thing carrying it?** A DOI names one
-work, an ORCID one person, a VIN one vehicle, so each is strong wherever it
-appears.
+contradiction. Membership turns on one question — **does a value in this
+namespace name one individual thing, the thing carrying it, whatever type that
+thing is?** A DOI names one citable work (paper, dataset, chapter, software);
+a VIN names one vehicle. Neither has a subject type narrow enough to be worth
+enumerating, so they are unconditionally strong.
 
-`issn` and `isbn` deliberately are **not** here. An ISSN names a *journal* and
-an ISBN a *book* — the container a work was published in, not the work. Two
-different papers in the same journal share an ISSN, so treating it as strong
-makes "same venue" read as "same paper": a false-merge generator on any corpus
-of papers. Symmetrically, one paper carrying a print ISSN and a reprint of it
-carrying the electronic ISSN would read as a *contradiction* and block a merge
-that should happen. They stay meaningful evidence for the entities they really
-do identify — see `DEFAULT_CONTAINER_NAMESPACES`.
+A namespace that names *one kind* of thing does not belong here — it belongs in
+`DEFAULT_SCOPED_NAMESPACES`, which is where `orcid`, `issn` and `isbn` live.
+Putting a scoped namespace in this set is how the false-merge defect ADR-0017
+fixes was introduced.
 
 This is a *default* — pass your own set to `SharedStrongIdentifierRule` per
 domain.
 """
 
-DEFAULT_CONTAINER_NAMESPACES: Mapping[str, frozenset[str]] = MappingProxyType(
+DEFAULT_SCOPED_NAMESPACES: Mapping[str, NamespaceScope] = MappingProxyType(
     {
-        "issn": frozenset({"journal", "serial", "periodical", "publicationvenue", "venue"}),
-        "isbn": frozenset({"book", "monograph", "bookedition"}),
+        # An ORCID names a *person*. Bibliographic ingest routinely copies an
+        # author's ORCID onto the work record, where a shared value means
+        # "same author", not "same paper".
+        "orcid": NamespaceScope(
+            subjects=frozenset({"person", "author", "researcher", "contributor", "creator"}),
+        ),
+        # An ISSN names a *serial*, not anything published in it. Deliberately
+        # NOT `venue`/`conference`: a proceedings *series* carries one ISSN
+        # across unrelated conferences (LNCS 0302-9743, CEUR-WS 1613-0073,
+        # PMLR 2640-3498), so promoting it for a venue type rebuilds the very
+        # false merge this scoping exists to prevent.
+        "issn": NamespaceScope(
+            subjects=frozenset({"journal", "serial", "periodical"}),
+            contradicts=False,
+        ),
+        # An ISBN names a *book*, not a chapter in it. One book carries an
+        # ISBN-10 and an ISBN-13 (a checksum re-encoding of each other) plus a
+        # distinct ISBN per format, so disagreement proves nothing.
+        "isbn": NamespaceScope(
+            subjects=frozenset({"book", "monograph", "bookedition"}),
+            contradicts=False,
+        ),
     }
 )
-"""Namespaces that are strong *only* for the entity type they actually name.
+"""Namespaces that are identity evidence only for the entity type they name.
 
-A container identifier is near-unique for its container and merely descriptive
-for anything published inside it. So strength here is a property of the
-**(namespace, entity_type)** pair, not of the namespace alone: an ISSN shared
-by two `Journal` entities is exactly as conclusive as a shared DOI is for two
-papers, while the same ISSN shared by two `Paper` entities says only that they
-appeared in the same place.
+An identifier attached to something it does not name is metadata, not identity:
+an ISSN on a `Paper` says where it appeared, an ORCID on a `Paper` says who
+wrote it. Neither says *which* paper it is. So an ISSN shared by two `Journal`
+entities is exactly as conclusive as a shared DOI is between two papers, while
+the same ISSN shared by two `Paper` entities is no evidence of identity at all.
 
 `SharedStrongIdentifierRule` promotes a namespace listed here to strong for one
-pair when *both* sides carry an entity type in its set (compared casefolded,
-ignoring separators — `"Journal"`, `"journal"` and `"publication_venue"` all
-match). Otherwise it emits an explicit `UNKNOWN` signal recording that the
-identifier was seen and deliberately not treated as strong, so the suppression
-is auditable rather than invisible.
+pair only when *both* sides carry one of its `subjects`. Otherwise it emits an
+explicit `UNKNOWN` signal recording that the identifier was seen and
+deliberately not weighed, so the suppression is auditable rather than
+invisible. `NamespaceScope.contradicts` additionally governs whether disjoint
+values may ever be read as positive evidence of difference.
 
-The type vocabulary is a *default*, not authority (ADR candidate 0005: the
-contract carries no strong-identifier taxonomy). An adopter whose types are
-named differently passes its own mapping; passing `{}` disables container
-promotion entirely.
+The vocabulary is a *default*, not authority (ADR candidate 0005: the contract
+carries no strong-identifier taxonomy). An adopter whose types are named
+differently passes its own mapping; `{}` disables scoping entirely.
 """
-
-
-def _type_key(entity_type: str) -> str:
-    """Casefold an entity type and drop separators, for tolerant type matching."""
-    return "".join(ch for ch in entity_type.casefold() if ch.isalnum())
 
 
 @runtime_checkable
@@ -370,23 +427,33 @@ class IdentityRule(Protocol):
 
 
 class SharedStrongIdentifierRule:
-    """A shared strong identifier agrees; disjoint ones in a namespace contradict.
+    """A shared strong identifier agrees; disjoint ones may contradict.
 
-    For each strong namespace present in *both* entities: `AGREE` if their
-    value sets intersect, else `CONTRADICT` (both claim a value in that
-    namespace and they disagree — e.g. two different DOIs). A namespace absent
-    from either side yields no signal at all (silence, not `UNKNOWN` noise).
-    The rule returns evidence for the matcher; it decides nothing.
+    For each namespace strong for this pair and present on *both* sides:
+    `AGREE` if their value sets intersect, else `CONTRADICT` (both claim a
+    value and they disagree — e.g. two different DOIs). A namespace absent from
+    either side yields no signal at all (silence, not `UNKNOWN` noise). The
+    rule returns evidence for the matcher; it decides nothing.
 
-    **Strength is relative to the entity type.** A namespace only earns strong
-    treatment when it identifies the entity carrying it. `strong_namespaces`
-    holds the namespaces that do so wherever they appear (DOI, ORCID, VIN);
-    `container_namespaces` maps a *container* namespace to the entity types it
-    genuinely identifies, and it is promoted to strong only when both sides of
-    the pair are one of those types. A container identifier seen on any other
-    type yields an explicit `UNKNOWN` signal — auditable evidence that it was
-    observed and deliberately not weighed as identity — which the feature
-    extractor neither counts as agreement nor as contradiction.
+    **Strength is relative to the entity type** (ADR-0017). `strong_namespaces`
+    holds namespaces strong for whatever carries them (DOI, VIN);
+    `scoped_namespaces` maps a namespace to the entity types it actually names
+    — an ORCID names a person, an ISSN a serial, an ISBN a book — and it is
+    strong for a pair only when *both* sides are one of those types. Seen on
+    any other type it yields an explicit `UNKNOWN` signal: auditable evidence
+    that the identifier was observed and deliberately not weighed, which the
+    feature extractor counts as neither agreement nor contradiction.
+
+    **Disagreement is decisive only where the registry issues one value per
+    subject.** A `NamespaceScope` with `contradicts=False` (ISSN, ISBN) never
+    yields `CONTRADICT`: a journal legitimately carries a print *and* an
+    electronic ISSN, and a book an ISBN-10 *and* an ISBN-13, so two records
+    holding different values are routinely the same thing. There, agreement
+    still proves identity while disagreement proves nothing.
+
+    Explicit membership in `strong_namespaces` always wins: it is the escape
+    hatch for an adopter who knows its own ingest attaches a namespace only to
+    the entity it names.
     """
 
     name = "shared_strong_identifier"
@@ -395,47 +462,43 @@ class SharedStrongIdentifierRule:
         self,
         *,
         strong_namespaces: frozenset[str] = DEFAULT_STRONG_NAMESPACES,
-        container_namespaces: Mapping[str, frozenset[str]] = DEFAULT_CONTAINER_NAMESPACES,
+        scoped_namespaces: Mapping[str, NamespaceScope] = DEFAULT_SCOPED_NAMESPACES,
     ) -> None:
         self._strong = strong_namespaces
-        self._containers = {
-            namespace: frozenset(_type_key(t) for t in types)
-            for namespace, types in container_namespaces.items()
+        # An explicitly strong namespace outranks a scope for it.
+        self._scoped = {
+            namespace: scope
+            for namespace, scope in scoped_namespaces.items()
+            if namespace not in strong_namespaces
         }
 
-    def _promoted(self, left: NormalizedEntity, right: NormalizedEntity) -> frozenset[str]:
-        """Container namespaces that are strong for *this* pair's entity types."""
-        left_type, right_type = _type_key(left.entity_type), _type_key(right.entity_type)
-        return frozenset(
-            namespace
-            for namespace, types in self._containers.items()
-            if left_type in types and right_type in types
+    def _suppressed(
+        self, namespace: str, scope: NamespaceScope, left: NormalizedEntity, right: NormalizedEntity
+    ) -> IdentitySignal:
+        """An auditable `UNKNOWN`: seen, and deliberately not weighed."""
+        return IdentitySignal(
+            rule=self.name,
+            namespace=namespace,
+            agreement=FeatureAgreement.UNKNOWN,
+            detail=(
+                f"{namespace} names {sorted(scope.subjects)!r}, not "
+                f"{left.entity_type!r}/{right.entity_type!r}; "
+                "not weighed as identity evidence"
+            ),
         )
 
     def evaluate(
         self, left: NormalizedEntity, right: NormalizedEntity
     ) -> tuple[IdentitySignal, ...]:
         signals: list[IdentitySignal] = []
-        promoted = self._promoted(left, right)
-        demoted = set(self._containers) - promoted - self._strong
-        for namespace in sorted(self._strong | promoted | demoted):
+        for namespace in sorted(self._strong | set(self._scoped)):
             left_values = set(left.identifiers.get(namespace, ()))
             right_values = set(right.identifiers.get(namespace, ()))
             if not left_values or not right_values:
                 continue
-            if namespace in demoted:
-                signals.append(
-                    IdentitySignal(
-                        rule=self.name,
-                        namespace=namespace,
-                        agreement=FeatureAgreement.UNKNOWN,
-                        detail=(
-                            f"{namespace} identifies a container, not a "
-                            f"{left.entity_type!r}/{right.entity_type!r}; "
-                            "not weighed as identity evidence"
-                        ),
-                    )
-                )
+            scope = self._scoped.get(namespace)
+            if scope is not None and not scope.names(left.entity_type, right.entity_type):
+                signals.append(self._suppressed(namespace, scope, left, right))
                 continue
             shared = left_values & right_values
             if shared:
@@ -445,6 +508,22 @@ class SharedStrongIdentifierRule:
                         namespace=namespace,
                         agreement=FeatureAgreement.AGREE,
                         detail=f"shared {namespace}={sorted(shared)!r}",
+                    )
+                )
+            elif scope is not None and not scope.contradicts:
+                # Multi-valued by design: one subject legitimately carries
+                # several values (print/electronic ISSN, ISBN-10/ISBN-13), so
+                # disjointness is not evidence that the subjects differ.
+                signals.append(
+                    IdentitySignal(
+                        rule=self.name,
+                        namespace=namespace,
+                        agreement=FeatureAgreement.UNKNOWN,
+                        detail=(
+                            f"disjoint {namespace}: {sorted(left_values)!r} vs "
+                            f"{sorted(right_values)!r}; one {left.entity_type!r} may carry "
+                            f"several {namespace} values, so this is not a contradiction"
+                        ),
                     )
                 )
             else:

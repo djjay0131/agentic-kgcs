@@ -70,12 +70,13 @@ from kgcs.er.matcher import (
     sigmoid,
 )
 from kgcs.er.normalize import (
-    DEFAULT_CONTAINER_NAMESPACES,
+    DEFAULT_SCOPED_NAMESPACES,
     DEFAULT_STRONG_NAMESPACES,
     DefaultNormalizer,
     FeatureAgreement,
     IdentityRule,
     IdentitySignal,
+    NamespaceScope,
     NormalizableEntity,
     NormalizedEntity,
     Normalizer,
@@ -101,10 +102,11 @@ __all__ = [
     "FeatureAgreement",
     "IdentitySignal",
     "IdentityRule",
+    "NamespaceScope",
     "SharedStrongIdentifierRule",
     "run_identity_rules",
     "normalize_name",
-    "DEFAULT_CONTAINER_NAMESPACES",
+    "DEFAULT_SCOPED_NAMESPACES",
     "DEFAULT_STRONG_NAMESPACES",
     # blocking (2B)
     "CandidatePair",
