@@ -25,6 +25,7 @@ from kgcs.er.normalize import (
     NamespaceScope,
     NormalizedEntity,
     SharedStrongIdentifierRule,
+    normalize_entity_type,
     run_identity_rules,
 )
 from kgcs.er.resolution import ErAction, ErResolutionPolicy
@@ -295,13 +296,15 @@ def test_adopter_can_declare_its_own_subject_type_vocabulary() -> None:
 
 def test_subjects_are_stored_normalized_on_the_public_mapping() -> None:
     """A consumer reading the exported default gets type keys already in the
-    form `_type_key` produces, rather than having to re-derive it."""
-    assert DEFAULT_SCOPED_NAMESPACES["orcid"].subjects == frozenset(
-        {"person", "author", "researcher", "contributor", "creator"}
-    )
+    form `normalize_entity_type` produces, rather than having to re-derive it."""
+    # Every shipped subject is already in `normalize_entity_type` form.
+    for scope in DEFAULT_SCOPED_NAMESPACES.values():
+        for subject in scope.subjects:
+            assert normalize_entity_type(subject) == subject
     assert NamespaceScope(subjects={"Publication_Venue", "JOURNAL"}).subjects == frozenset(
         {"publicationvenue", "journal"}
     )
+    assert normalize_entity_type("Publication_Venue") == "publicationvenue"
 
 
 def test_adopter_can_disable_scoping_entirely() -> None:
@@ -406,3 +409,95 @@ def test_rarity_still_counts_a_shared_issn_between_two_journals() -> None:
     signals = run_identity_rules([SharedStrongIdentifierRule()], left, right)
     extractor = DefaultFeatureExtractor(rarity_index={_ISSN: 4})
     assert extractor.extract(_PAIR, left, right, signals=signals).attribute_rarity == 0.25
+
+
+# ---------------------------------------------------------------------------
+# Review pass 2: the person vocabulary, and the cost of `contradicts=False`
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "entity_type",
+    [
+        "Person", "People", "Human", "Individual", "Agent", "Author", "CoAuthor",
+        "Creator", "Contributor", "Researcher", "Scholar", "Academic", "Scientist",
+        "Investigator", "Editor", "Reviewer", "Inventor",
+    ],
+)
+def test_orcid_identifies_people_under_any_reasonable_type_name(entity_type: str) -> None:
+    """MAJOR-B regression. The first subject list held only five names, so an
+    adopter typing its people `Human`/`Individual`/`Agent`/`Scholar` silently
+    lost ORCID strength: 0.997112 AUTO_LINK -> 0.461150 GATHER_MORE_EVIDENCE.
+    Nothing caught it, because the only pre-existing ORCID test passes
+    `strong_namespaces` explicitly and so bypasses scoping altogether. This
+    test deliberately uses the *default* rule so the scoping is exercised."""
+    orcid = ("000000021825009x",)
+    left = _entity("a1", entity_type, "j. smith", orcid=orcid)
+    right = _entity("a2", entity_type, "john smith", orcid=orcid)
+    signals = run_identity_rules([SharedStrongIdentifierRule()], left, right)
+    assert [s.agreement for s in signals] == [FeatureAgreement.AGREE]
+    probability, action = _decide(left, right, FalseMergeCostClass.STANDARD)
+    assert action is ErAction.AUTO_LINK
+    assert probability > 0.99
+
+
+def test_widening_the_person_vocabulary_does_not_reach_works_or_containers() -> None:
+    """Widening is only safe because none of the added names denotes a work or
+    a container — the failure mode this whole ADR exists to prevent."""
+    subjects = DEFAULT_SCOPED_NAMESPACES["orcid"].subjects
+    for work_or_container in (
+        "paper", "article", "journalarticle", "publication", "work", "preprint",
+        "dataset", "book", "chapter", "journal", "venue", "conference",
+    ):
+        assert work_or_container not in subjects
+
+
+def test_contradicts_false_gives_up_the_only_hard_split_between_two_journals() -> None:
+    """MAJOR-A: the documented *cost* of `contradicts=False`, pinned so the
+    trade cannot drift unnoticed.
+
+    Two genuinely different journals with disjoint ISSNs were separated by the
+    CONTRADICT (p=0.000001, RETAIN_SEPARATE, cluster rejected at every cost
+    class). Giving that up to cure the print-vs-e-ISSN false-non-merge means
+    they are now judged on soft evidence alone — and enough shared affiliations
+    carry them to AUTO_LINK at STANDARD. Mitigation is a cluster-level
+    constraint or an ISSN-L authority, not a return to CONTRADICT.
+    """
+    left = _entity("j1", "Journal", "journal of physics a mathematical and theoretical")
+    right = _entity("j2", "Journal", "journal of physics b atomic molecular and optical physics")
+    lo_p, lo_action = _decide(left, right, FalseMergeCostClass.STANDARD)
+    assert lo_action is ErAction.GATHER_MORE_EVIDENCE  # nothing separates them, nothing merges them
+
+    crowded_left = left.model_copy(
+        update={"affiliations": tuple(f"inst{i}" for i in range(12)),
+                "identifiers": {"issn": ("1751-8113",)}}
+    )
+    crowded_right = right.model_copy(
+        update={"affiliations": tuple(f"inst{i}" for i in range(12)),
+                "identifiers": {"issn": ("0953-4075",)}}
+    )
+    signals = run_identity_rules([SharedStrongIdentifierRule()], crowded_left, crowded_right)
+    assert [s.agreement for s in signals] == [FeatureAgreement.UNKNOWN]  # NOT contradict
+    _, action = _decide(crowded_left, crowded_right, FalseMergeCostClass.STANDARD)
+    assert action is ErAction.AUTO_LINK  # the accepted cost, documented in ADR-0017
+
+    # HIGH cost class still refuses to auto-link it — the mitigation an adopter
+    # who cannot accept this trade should reach for first.
+    _, high_action = _decide(crowded_left, crowded_right, FalseMergeCostClass.HIGH)
+    assert high_action is not ErAction.AUTO_LINK
+
+
+def test_disabling_scoping_also_disables_the_rarity_suppression() -> None:
+    """MINOR-C, pinned as known behaviour rather than silently true: the
+    rarity filter keys off the UNKNOWN signal, so `scoped_namespaces={}` is a
+    wider opt-out than it looks."""
+    left = _entity("p1", "Paper", "a survey of deep learning methods", issn=(_ISSN,))
+    right = _entity("p2", "Paper", "a survey of deep learning models", issn=(_ISSN,))
+    extractor = DefaultFeatureExtractor(rarity_index={_ISSN: 1})
+
+    unscoped = run_identity_rules([SharedStrongIdentifierRule(scoped_namespaces={})], left, right)
+    assert unscoped == ()
+    assert extractor.extract(_PAIR, left, right, signals=unscoped).attribute_rarity == 1.0
+
+    scoped = run_identity_rules([SharedStrongIdentifierRule()], left, right)
+    assert extractor.extract(_PAIR, left, right, signals=scoped).attribute_rarity is None

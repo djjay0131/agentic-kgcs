@@ -28,11 +28,36 @@ contradicts=False`. Off-subject use emits an auditable `UNKNOWN`;
 Journal/book/person resolution preserved exactly (a Journal pair sharing an
 ISSN measures p = 0.996727 before and after). `FEATURE_KEYS` and `to_vector`
 untouched, so replay stays bit-identical. **No pre-existing test changed** —
-nothing in the suite encoded the old behaviour (435 → 468 passing, +33 new).
+nothing in the suite encoded the old behaviour (435 → 488 passing, +53 new).
 ADR candidate 0005 amended, not re-dispositioned. Warrants a **minor** release,
 not a patch: default resolution outcomes change, and the *value* of an exported
 constant changed, so even an adopter who explicitly pinned
 `strong_namespaces=DEFAULT_STRONG_NAMESPACES` is affected.
+
+Review pass 2 (APPROVE-WITH-FINDINGS) added two more, both fixed: the ORCID
+subject list was too narrow, silently costing person↔person ORCID matching for
+the type names `Human`/`Individual`/`Agent`/`Scholar` and similar (measured
+0.997112 AUTO_LINK → 0.461150 GATHER_MORE_EVIDENCE, invisible to the suite
+because the one pre-existing ORCID test bypasses scoping) — now 17 person-shaped
+type names with a test that exercises the default rule; and the ADR documented
+only the upside of `contradicts=False`. Its **cost** is now recorded and pinned
+by a test: two genuinely different journals with disjoint ISSNs went from
+p = 0.000001 / RETAIN_SEPARATE / cluster-rejected at every cost class to
+p = 0.997792 / **AUTO_LINK at STANDARD** with 12 shared affiliations. Judged the
+right trade because the old behaviour was wrong on the *common* case (a journal
+normally carries print + electronic ISSN) and failed closed irreversibly, while
+the new one is wrong only on a conjunction and fails open into a routable
+decision; HIGH still declines. Mitigations recorded: run journal ER at HIGH, or
+add an ISSN-L authority at normalization and restore `contradicts=True`.
+
+**Structural note recorded in the ADR:** MAJOR-A, the deferred DOI problem
+(#32), and the declined "weak corroborating evidence" alternative are all the
+same gap — `PairFeatures` has no *weak negative* evidence channel, only
+three-valued `identifier_agreement` where CONTRADICT dominates. Every identifier
+signal must be decisive or silent. One signed small-weight feature fixes all
+three; it is deferred because adding a key changes `FEATURE_KEYS` and breaks
+replay comparability against v1-recorded decisions — a migration with its own
+ADR, not a defect fix.
 
 Known remaining exposure, deliberately not fixed in that PR and filed as
 follow-ups: `doi` has the mirror problem (a preprint DOI vs a published DOI are

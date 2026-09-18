@@ -248,6 +248,42 @@ record happens to be.
   absent.
 - `IdentitySignal` output is more verbose for scoped identifiers on
   non-subject types.
+- **`contradicts=False` gives up the only hard evidence separating two
+  *different* journals or books.** This is the direct cost of curing the
+  print-vs-e-ISSN false non-merge, and it is not small. Measured on two
+  genuinely different journals with disjoint ISSNs (J. Phys. A `1751-8113` vs
+  J. Phys. B `0953-4075`):
+
+  | shared affiliations | before (CONTRADICT) | after (`contradicts=False`) |
+  |---|---|---|
+  | 0 | p = 0.000001, `RETAIN_SEPARATE`, cluster rejected | p = 0.528353, `GATHER_MORE_EVIDENCE` |
+  | 6 | p = 0.000019, `RETAIN_SEPARATE`, cluster rejected | p = 0.957448, `LLM_ASSESS` |
+  | 12 | p = 0.000376, `RETAIN_SEPARATE`, cluster rejected | p = 0.997792, **`AUTO_LINK` at STANDARD** |
+
+  Before, the ISSN alone separated them at every cost class and the cluster
+  constraint refused the merge outright. Now they are judged on soft evidence,
+  and a crowded shared-affiliation set carries them to an auto-link.
+
+  **Why it is still the right trade.** The two errors are not symmetric. The
+  old behaviour was wrong on the *common* case — a journal carrying both its
+  print and electronic ISSN is the norm, not the exception, which is precisely
+  why ISSN-L exists — and it failed *closed* in a way no amount of other
+  evidence could reopen, silently splitting one journal forever. The new
+  behaviour is wrong only on a *conjunction*: two different journals, disjoint
+  ISSNs, similar names, **and** a dozen shared affiliations. It also fails
+  *open*, into a routing decision a human or adviser can still catch, and HIGH
+  cost class still refuses to auto-link it (verified: `LLM_ASSESS`, not
+  `AUTO_LINK`).
+
+  **Mitigations, in order of preference.** (a) Run journal resolution under
+  `FalseMergeCostClass.HIGH`, which declines the auto-link on its own. (b) Add
+  an ISSN-L authority at normalization so a journal's print and electronic
+  ISSNs collapse to one value — then `contradicts=True` becomes correct again
+  for `issn` and can be restored per-adopter through `NamespaceScope`. (c) A
+  cluster-level constraint expressing "these two ISSNs are registered to
+  different titles", which is real negative evidence rather than an inference
+  from disjointness. Not (d) restoring `CONTRADICT`, which re-breaks the
+  common case to patch the rare one.
 - Blocking is unchanged and still fans out quadratically on a shared ISSN
   (`ExactIdentifierChannel.block_keys` emits a key per identifier), so every
   pair of papers in a journal is still *proposed*. Those pairs now reliably
@@ -271,6 +307,39 @@ record happens to be.
   defect fix, not a feature, but it should be released as a **minor** version
   with the change called out, not as a patch.
 
+### The one missing capability behind three of these problems
+
+Worth recording explicitly, because it is easy to file these as three
+unrelated deferrals and miss that they are one gap.
+
+`PairFeatures` has a **three-valued** `identifier_agreement` in which
+`CONTRADICT` dominates absolutely (`features._identifier_agreement`), plus a
+`mutually_exclusive` flag that hard-blocks a cluster. There is no channel for
+*weak negative* evidence — no way to say "this slightly argues against a match"
+as distinct from "this proves they differ" or "this says nothing". Every
+identifier signal must therefore be decisive or silent.
+
+That single gap is what forces:
+
+- **MAJOR-A above.** Disjoint ISSNs on two journals are genuinely mild
+  negative evidence. With only `CONTRADICT` and `UNKNOWN` available, the choice
+  was "hard-block the common print/e-ISSN case" or "say nothing"; there was no
+  third option, so the trade had to be made at all.
+- **The deferred DOI problem (issue #32).** A preprint DOI and a published DOI
+  are disjoint but name one work. Same shape, same forced choice.
+- **Alternative 2 above** (weak/corroborating positive evidence for a shared
+  container identifier), declined for the same structural reason in the other
+  direction.
+
+The fix for all three is one feature: a small-weight, non-dominating evidence
+channel — signed, so it serves both directions. It is deferred, not declined,
+and for a concrete reason: adding a key changes `FEATURE_KEYS` and therefore
+every stored `feature_vector`, breaking replay comparability against decisions
+recorded under v1. That is a migration, not a defect fix, and it wants its own
+ADR. Whoever picks up #32 should treat it as this capability, not as a DOI
+special case — and should expect MAJOR-A's mitigation to fall out of the same
+work.
+
 ### Known remaining exposure (deliberately not fixed here)
 
 - **`doi` has the mirror problem.** A preprint DOI and a published DOI name the
@@ -283,6 +352,18 @@ record happens to be.
   the membership test holds is partly a property of the ingest pipeline, not
   only of the namespace. `DEFAULT_SCOPED_NAMESPACES` fixes the three known
   cases; a novel one would need the adopter to declare it.
+- **`scoped_namespaces={}` is a wider opt-out than it looks.** It disables the
+  `attribute_rarity` suppression too, because that filter keys off the
+  `UNKNOWN` signal the scoping emits (measured: a shared ISSN between two
+  papers returns to rarity-eligible, p = 0.918754 with a `rarity_index`). The
+  semantics are kept — an empty mapping is the only way to express "no
+  scoping", and re-reading it as "use defaults" would leave no way to opt out —
+  but it is documented on the constructor and pinned by a test rather than
+  left to be discovered.
+- **Scoping a namespace that is also in `strong_namespaces` is a silent
+  no-op.** Strong membership wins, which is what makes the restore-old-
+  behaviour hatch a single argument. Documented on the constructor; not made an
+  error, because the overlap is exactly how the hatch is expressed.
 
 ## Impacted Areas
 

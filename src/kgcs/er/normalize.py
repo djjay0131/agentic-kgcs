@@ -302,13 +302,14 @@ class DefaultNormalizer:
 # Identity rules
 # ---------------------------------------------------------------------------
 
-def _type_key(entity_type: str) -> str:
+def normalize_entity_type(entity_type: str) -> str:
     """Casefold an entity type and drop separators, for tolerant type matching.
 
-    `"Journal"`, `"journal"` and `"publication_journal"`-style variants all
-    reduce to the same key. Exported so a consumer reading
-    `DEFAULT_SCOPED_NAMESPACES` normalizes entity types the same way the rule
-    does (the subjects in that mapping are already stored normalized).
+    `"Journal"`, `"journal"` and `"Publication_Journal"`-style variants all
+    reduce to the same key. Public, and exported from `kgcs.er`, so a consumer
+    reading `DEFAULT_SCOPED_NAMESPACES` normalizes entity types the same way
+    the rule does — the `subjects` in that mapping are already stored in this
+    form, so a lookup needs no re-derivation.
     """
     return "".join(ch for ch in entity_type.casefold() if ch.isalnum())
 
@@ -322,16 +323,25 @@ class NamespaceScope(BaseModel):
     intends *one* value per subject.
 
     - `subjects` — the entity types this namespace identifies, stored
-      normalized by `_type_key`. `SharedStrongIdentifierRule` treats the
-      namespace as strong for a pair only when *both* sides carry one of them.
+      normalized by `normalize_entity_type`. `SharedStrongIdentifierRule`
+      treats the namespace as strong for a pair only when *both* sides carry
+      one of them.
     - `contradicts` — whether disjoint values are positive evidence the two
-      entities differ. True where the registry issues one value per subject
+      entities differ. True where the registry *intends* one value per subject
       (an ORCID per person). False where one subject legitimately carries
       several (a journal has a print *and* an electronic ISSN — which is why
       ISSN-L exists; a book has an ISBN-10 and an ISBN-13, and another pair per
       format). For those, agreement is still conclusive while disagreement
       means nothing, so the rule emits `AGREE` or stays honest with `UNKNOWN`
       but never manufactures a `CONTRADICT`.
+
+    `contradicts=True` claims registry *intent*, not observed uniqueness.
+    Duplicate ORCID iDs for one researcher do occur — ORCID itself publishes a
+    duplicate-record merge process, and a deprecated iD redirects to a primary
+    — so two disjoint ORCIDs are strong but not infallible evidence of two
+    people. An adopter whose corpus is duplicate-heavy, or who resolves
+    deprecated iDs after ER rather than before, can set `contradicts=False` for
+    `orcid` and keep the (unaffected) `AGREE` direction.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -342,11 +352,14 @@ class NamespaceScope(BaseModel):
     @field_validator("subjects", mode="after")
     @classmethod
     def _normalize_subjects(cls, value: frozenset[str]) -> frozenset[str]:
-        return frozenset(_type_key(subject) for subject in value)
+        return frozenset(normalize_entity_type(subject) for subject in value)
 
     def names(self, left_type: str, right_type: str) -> bool:
         """True iff this namespace identifies *both* entities' types."""
-        return _type_key(left_type) in self.subjects and _type_key(right_type) in self.subjects
+        return (
+            normalize_entity_type(left_type) in self.subjects
+            and normalize_entity_type(right_type) in self.subjects
+        )
 
 
 DEFAULT_STRONG_NAMESPACES: frozenset[str] = frozenset({"doi", "vin"})
@@ -372,9 +385,35 @@ DEFAULT_SCOPED_NAMESPACES: Mapping[str, NamespaceScope] = MappingProxyType(
     {
         # An ORCID names a *person*. Bibliographic ingest routinely copies an
         # author's ORCID onto the work record, where a shared value means
-        # "same author", not "same paper".
+        # "same author", not "same paper". The subject list is deliberately
+        # broad: every plausible name for a person-shaped entity, including
+        # role-flavoured ones, because a shared ORCID between two of *any* of
+        # them still means one human. Narrowing it costs a correct merge;
+        # widening it costs nothing, since none of these names a work or a
+        # container. `contradicts` stays True — ORCID issues one iD per person
+        # — though see the docstring for the duplicate-iD caveat.
         "orcid": NamespaceScope(
-            subjects=frozenset({"person", "author", "researcher", "contributor", "creator"}),
+            subjects=frozenset(
+                {
+                    "person",
+                    "people",
+                    "human",
+                    "individual",
+                    "agent",
+                    "author",
+                    "coauthor",
+                    "creator",
+                    "contributor",
+                    "researcher",
+                    "scholar",
+                    "academic",
+                    "scientist",
+                    "investigator",
+                    "editor",
+                    "reviewer",
+                    "inventor",
+                }
+            ),
         ),
         # An ISSN names a *serial*, not anything published in it. Deliberately
         # NOT `venue`/`conference`: a proceedings *series* carries one ISSN
@@ -451,9 +490,25 @@ class SharedStrongIdentifierRule:
     holding different values are routinely the same thing. There, agreement
     still proves identity while disagreement proves nothing.
 
-    Explicit membership in `strong_namespaces` always wins: it is the escape
-    hatch for an adopter who knows its own ingest attaches a namespace only to
-    the entity it names.
+    **Precedence (MINOR-E).** Explicit membership in `strong_namespaces` always
+    wins over a scope for the same namespace, so scoping a namespace that is
+    also in the strong set is a deliberate no-op rather than an error. That is
+    what makes the restore-old-behaviour hatch a single argument:
+    `strong_namespaces=DEFAULT_STRONG_NAMESPACES | {"issn", "isbn", "orcid"}`
+    needs no matching edit to `scoped_namespaces`. It also means an adopter
+    *narrowing* a namespace must remove it from `strong_namespaces`, not merely
+    add a scope for it.
+
+    **`scoped_namespaces={}` disables scoping entirely, including its knock-on
+    protections (MINOR-C).** With no scope, an off-subject identifier produces
+    no signal at all rather than an `UNKNOWN` one — and because
+    `DefaultFeatureExtractor._attribute_rarity` keys its suppression off that
+    `UNKNOWN`, a shared ISSN between two papers becomes rarity-eligible again
+    (measured p=0.918754 with a `rarity_index` injected, versus 0.604806 under
+    the defaults). This is the literal meaning of "no scoping" and the only way
+    to express it, but it is a wider opt-out than it looks. To *narrow* the
+    vocabulary, pass a mapping containing the namespaces you want rather than
+    an empty one.
     """
 
     name = "shared_strong_identifier"

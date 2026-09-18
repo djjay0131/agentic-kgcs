@@ -82,6 +82,7 @@ from kgcs.er.normalize import (
     Normalizer,
     SharedStrongIdentifierRule,
     TypeHook,
+    normalize_entity_type,
     normalize_name,
     run_identity_rules,
 )
@@ -103,6 +104,7 @@ __all__ = [
     "IdentitySignal",
     "IdentityRule",
     "NamespaceScope",
+    "normalize_entity_type",
     "SharedStrongIdentifierRule",
     "run_identity_rules",
     "normalize_name",
