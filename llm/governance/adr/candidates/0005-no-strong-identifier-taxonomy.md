@@ -24,9 +24,11 @@ contract does not carry.
 
 ## Local workaround
 
-`kgcs.er` ships a `DEFAULT_STRONG_NAMESPACES` set (doi, orcid, vin, isbn, …)
-and treats agreement/contradiction on those namespaces as strong signals; the
-set is injectable so an adopter can extend it. This is a KGCS-local heuristic,
+`kgcs.er` ships a `DEFAULT_STRONG_NAMESPACES` set (doi, vin) plus a
+`DEFAULT_SCOPED_NAMESPACES` mapping (orcid, issn, isbn → the entity types they
+name, and whether disagreement is decisive) and treats agreement/contradiction
+on those namespaces as strong signals; both are injectable so an adopter can
+extend or replace them. This is a KGCS-local heuristic,
 honest about its provenance, but it duplicates knowledge that arguably belongs
 with the identifier definition.
 
@@ -43,3 +45,22 @@ configurable heuristic, not authority.
 ADOPTER — deferred to the adopter/upstream backlog; KGCS's local handling (injectable/honest-null) is correct for v1.
 
 See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.
+
+## Amendment (2026-09-18) — ADR-0017
+
+The *contents* of the local list were defective, independently of this
+candidate's status. `issn`, `isbn` and `orcid` were all in
+`DEFAULT_STRONG_NAMESPACES`, so two different papers sharing only a journal —
+or only an author — auto-linked at p = 0.998383 even at HIGH cost.
+[ADR-0017](../0017-identifier-strength-is-entity-type-relative.md) makes
+identifier strength relative to the entity type a namespace *names*, and adds a
+second axis for whether disagreement in a namespace is decisive at all (a
+journal legitimately carries a print and an electronic ISSN).
+
+This candidate's disposition is unchanged: the taxonomy is still KGCS-local
+and still a heuristic rather than contract authority. ADR-0017 in fact
+*sharpens* the case for the upstream improvement sketched above. The missing
+contract marker is not merely a uniqueness class; it is two facts per
+namespace — **which entity type it identifies**, and **whether the registry
+issues one value per subject**. Both are properties of the identifier
+definition, which is where they belong.

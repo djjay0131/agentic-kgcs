@@ -299,18 +299,42 @@ class DefaultFeatureExtractor:
     `rarity_index` optionally maps a normalized identifier value to its corpus
     frequency; a *shared rare* identifier then yields a high `attribute_rarity`
     (1/frequency). Without it, `attribute_rarity` stays `None` — honest null.
+    Namespaces the identity rules suppressed as not naming this entity type
+    (an `UNKNOWN` signal) are excluded from rarity too, so an identifier
+    refused as identity evidence cannot re-enter the score through this
+    channel.
     """
 
     def __init__(self, *, rarity_index: Mapping[str, int] | None = None) -> None:
         self._rarity_index = rarity_index
 
     def _attribute_rarity(
-        self, left: NormalizedEntity, right: NormalizedEntity
+        self,
+        left: NormalizedEntity,
+        right: NormalizedEntity,
+        signals: Sequence[IdentitySignal] = (),
     ) -> float | None:
+        """Rarity of the rarest *identity-bearing* value the pair shares.
+
+        A namespace the identity rules explicitly suppressed — an `UNKNOWN`
+        signal, meaning it does not name this kind of entity (ADR-0017) — is
+        excluded. Otherwise a shared ISSN between two papers would re-enter the
+        score through this feature's `+2.0` weight after having been refused
+        entry as identity evidence, which is the same false merge by a second
+        route. Namespaces the rules say nothing about are still counted: rarity
+        is precisely the channel for a shared *weak* identifier.
+        """
         if self._rarity_index is None:
             return None
+        suppressed = {
+            signal.namespace
+            for signal in signals
+            if signal.agreement is FeatureAgreement.UNKNOWN
+        }
         best: float | None = None
         for namespace in left.identifiers.keys() & right.identifiers.keys():
+            if namespace in suppressed:
+                continue
             shared = set(left.identifiers[namespace]) & set(right.identifiers[namespace])
             for value in shared:
                 freq = self._rarity_index.get(value)
@@ -369,7 +393,7 @@ class DefaultFeatureExtractor:
             temporal_compatible=temporal,
             geographic_distance=_geographic_distance(left, right),
             shared_affiliations=self._shared_affiliations(left, right),
-            attribute_rarity=self._attribute_rarity(left, right),
+            attribute_rarity=self._attribute_rarity(left, right, signals),
             source_reliability=self._source_reliability(left, right),
             embedding_similarity=self._embedding_similarity(left, right),
             neighborhood_compatibility=self._neighborhood_compatibility(left, right),

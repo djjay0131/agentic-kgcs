@@ -1,5 +1,81 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-18 (post-v1 defect fix, rev 2 after review): **ADR-0017 —
+identifier strength is entity-type relative.** Branch
+`fix/container-identifier-strength` (PR #30), opened against tagged `v1.0.0`
+after an adopter probe. `DEFAULT_STRONG_NAMESPACES` held `issn`/`isbn`/`orcid`,
+none of which names a *work*: two different papers sharing only an ISSN scored
+p = 0.998383 and **AUTO_LINK even at HIGH** cost (risk 0.001617 inside the
+documented 0.002 budget); two different papers by one author sharing only an
+ORCID scored identically. Independent review then found three more instances of
+the same fault, all reproduced and now fixed: `venue` in the first revision's
+ISSN subject set let two different conferences sharing the LNCS series ISSN
+auto-link at p = 0.998028; one journal's print vs electronic ISSN (and one
+book's ISBN-10 vs ISBN-13) read as `CONTRADICT`, scoring p = 0.000001 and
+getting the cluster rejected — a defect the first revision had *pinned green*
+with a test; and a shared ISSN still moved probability through
+`attribute_rarity` (weight +2.0, 0.604806 → 0.918754) after the signal channel
+had refused it.
+
+Fix, two axes, both data: `DEFAULT_STRONG_NAMESPACES = {doi, vin}` (strong for
+whatever carries them); new `NamespaceScope` + `DEFAULT_SCOPED_NAMESPACES`
+carrying, per namespace, the entity types it *names* and whether disagreement
+is decisive — `orcid → person/author/… contradicts=True`, `issn →
+journal/serial/periodical contradicts=False`, `isbn → book/monograph/…
+contradicts=False`. Off-subject use emits an auditable `UNKNOWN`;
+`_attribute_rarity` now excludes suppressed namespaces. All injectable;
+`strong_namespaces` membership outranks a scope (the one-arg escape hatch).
+Journal/book/person resolution preserved exactly (a Journal pair sharing an
+ISSN measures p = 0.996727 before and after). `FEATURE_KEYS` and `to_vector`
+untouched, so replay stays bit-identical. **No pre-existing test changed** —
+nothing in the suite encoded the old behaviour (435 → 488 passing, +53 new).
+ADR candidate 0005 amended, not re-dispositioned. Warrants a **minor** release,
+not a patch: default resolution outcomes change, and the *value* of an exported
+constant changed, so even an adopter who explicitly pinned
+`strong_namespaces=DEFAULT_STRONG_NAMESPACES` is affected.
+
+Review pass 2 (APPROVE-WITH-FINDINGS) added two more, both fixed: the ORCID
+subject list was too narrow, silently costing person↔person ORCID matching for
+the type names `Human`/`Individual`/`Agent`/`Scholar` and similar (measured
+0.997112 AUTO_LINK → 0.461150 GATHER_MORE_EVIDENCE, invisible to the suite
+because the one pre-existing ORCID test bypasses scoping) — now 17 person-shaped
+type names with a test that exercises the default rule; and the ADR documented
+only the upside of `contradicts=False`. Its **cost** is now recorded and pinned
+by a test: two genuinely different journals with disjoint ISSNs went from
+p = 0.000001 / RETAIN_SEPARATE / cluster-rejected at every cost class to
+p = 0.997792 / **AUTO_LINK at STANDARD** with 12 shared affiliations. Judged the
+right trade because the old behaviour was wrong on the *common* case (a journal
+normally carries print + electronic ISSN) and failed closed irreversibly, while
+the new one is wrong only on a conjunction and fails open into a routable
+decision; HIGH still declines. Mitigations recorded: run journal ER at HIGH, or
+add an ISSN-L authority at normalization and restore `contradicts=True`.
+
+**Structural note recorded in the ADR:** MAJOR-A, the deferred DOI problem
+(#32), and the declined "weak corroborating evidence" alternative are all the
+same gap — `PairFeatures` has no *weak negative* evidence channel, only
+three-valued `identifier_agreement` where CONTRADICT dominates. Every identifier
+signal must be decisive or silent. One signed small-weight feature fixes all
+three; it is deferred because adding a key changes `FEATURE_KEYS` and breaks
+replay comparability against v1-recorded decisions — a migration with its own
+ADR, not a defect fix.
+
+Known remaining exposure, deliberately not fixed in that PR and filed as
+follow-ups: `doi` has the mirror problem (a preprint DOI vs a published DOI are
+disjoint, so `CONTRADICT` blocks a merge that should happen — but §7.4 names
+"two different DOIs" as its canonical contradiction, so flipping it is a
+spec-level call); blocking still fans out quadratically on a shared ISSN; and
+the release-version bump itself.
+
+Four further findings were verified against `main` during the same pass and are
+**not** fixed there (each deserves its own issue): (1) `ErRoutingThresholds` is
+absent from `ReplayInputs` and its `version` is stamped nowhere — `replay()`
+substitutes defaults, a determinism hole (HIGH); (2) `ClusterValidation` can be
+`valid=True` with `checked_pairs=0`, and the gate reads only `.valid`, never
+`pairwise_complete` — unvalidated membership can auto-link (HIGH); (3)
+`calibrate_logistic` on an empty golden set returns an all-zero model without
+raising, and `CalibratedMatcher` cannot signal it is uncalibrated — every pair
+scores exactly 0.5 (MEDIUM); (4) no `py.typed`, no `LICENSE` (LOW).
+
 Update 2026-09-17 (wrap-up): **KGCS v1 build fully closed out.** All build PRs
 merged (#5, #10–#17) + the completion PR (#27); PR #18 closed as executed;
 Issue #2 re-dispositioned (kept open — items 1/4 KGIS/contract-owned). Stale
