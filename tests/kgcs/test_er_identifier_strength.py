@@ -13,6 +13,8 @@ titles were superficially alike. Both directions are pinned here:
 """
 
 import pytest
+from kg_contracts.identity import IdentityLinkKind
+from kg_contracts.policy import AdjudicationRoute
 
 from kgcs.er.blocking import CandidatePair
 from kgcs.er.cluster import Cluster, MutuallyExclusiveAttributeConstraint
@@ -481,10 +483,60 @@ def test_contradicts_false_gives_up_the_only_hard_split_between_two_journals() -
     _, action = _decide(crowded_left, crowded_right, FalseMergeCostClass.STANDARD)
     assert action is ErAction.AUTO_LINK  # the accepted cost, documented in ADR-0017
 
-    # HIGH cost class still refuses to auto-link it — the mitigation an adopter
-    # who cannot accept this trade should reach for first.
+    # HIGH declines *at this count* — but it is a shifted threshold, not a
+    # floor, and the ADR must not be read as claiming otherwise.
     _, high_action = _decide(crowded_left, crowded_right, FalseMergeCostClass.HIGH)
     assert high_action is not ErAction.AUTO_LINK
+
+
+def test_high_cost_class_shifts_the_auto_link_threshold_it_does_not_remove_it() -> None:
+    """The correction to ADR-0017's mitigation (c). `shared_affiliations` is an
+    unbounded count weighted x0.5, so enough of them clears any fixed budget:
+    HIGH declines two different journals at 12 shared affiliations but
+    auto-links them at 14 (p=0.999187). Treating HIGH as a floor rather than a
+    raised bar is the misreading this test exists to prevent."""
+    def _crowded(n: int) -> tuple[NormalizedEntity, NormalizedEntity]:
+        affiliations = tuple(f"inst{i}" for i in range(n))
+        return (
+            NormalizedEntity(
+                source_key="j1", graph_id="g1", entity_type="Journal",
+                normalized_names=("journal of physics a mathematical and theoretical",),
+                affiliations=affiliations, identifiers={"issn": ("1751-8113",)},
+            ),
+            NormalizedEntity(
+                source_key="j2", graph_id="g1", entity_type="Journal",
+                normalized_names=("journal of physics b atomic molecular and optical physics",),
+                affiliations=affiliations, identifiers={"issn": ("0953-4075",)},
+            ),
+        )
+
+    _, declines = _decide(*_crowded(12), FalseMergeCostClass.HIGH)
+    assert declines is ErAction.LLM_ASSESS
+
+    probability, auto_links = _decide(*_crowded(14), FalseMergeCostClass.HIGH)
+    assert auto_links is ErAction.AUTO_LINK
+    assert probability > 0.999
+
+
+def test_a_crowded_auto_link_puts_no_human_in_the_loop() -> None:
+    """The correction to ADR-0017's "fails open" claim: at these counts the
+    decision is AUTO with link_kind=SAME_AS — no adviser, no reviewer."""
+    affiliations = tuple(f"inst{i}" for i in range(12))
+    left = _entity("j1", "Journal", "journal of physics a mathematical and theoretical",
+                   issn=("1751-8113",)).model_copy(update={"affiliations": affiliations})
+    right = _entity("j2", "Journal", "journal of physics b atomic molecular and optical physics",
+                    issn=("0953-4075",)).model_copy(update={"affiliations": affiliations})
+    signals = run_identity_rules([SharedStrongIdentifierRule()], left, right)
+    features = DefaultFeatureExtractor().extract(_PAIR, left, right, signals=signals)
+    key = CalibrationKey(
+        graph_id="g1", entity_type="Journal", source_pair=("s", "s"),
+        matcher_version=DeterministicRuleMatcher.matcher_version, consequence_class="STANDARD",
+    )
+    result = DeterministicRuleMatcher().score(features, pair=_PAIR, key=key)
+    decision = ErResolutionPolicy().decide(result, profile=_profile(FalseMergeCostClass.STANDARD))
+    assert decision.action is ErAction.AUTO_LINK
+    assert decision.link_kind is IdentityLinkKind.SAME_AS
+    assert decision.to_route() is AdjudicationRoute.AUTO
 
 
 def test_disabling_scoping_also_disables_the_rarity_suppression() -> None:

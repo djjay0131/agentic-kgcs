@@ -267,23 +267,48 @@ record happens to be.
   **Why it is still the right trade.** The two errors are not symmetric. The
   old behaviour was wrong on the *common* case — a journal carrying both its
   print and electronic ISSN is the norm, not the exception, which is precisely
-  why ISSN-L exists — and it failed *closed* in a way no amount of other
-  evidence could reopen, silently splitting one journal forever. The new
-  behaviour is wrong only on a *conjunction*: two different journals, disjoint
-  ISSNs, similar names, **and** a dozen shared affiliations. It also fails
-  *open*, into a routing decision a human or adviser can still catch, and HIGH
-  cost class still refuses to auto-link it (verified: `LLM_ASSESS`, not
-  `AUTO_LINK`).
+  why ISSN-L exists — so it mis-handled the majority of real journal pairs,
+  and no amount of other evidence could reopen the split. The new behaviour is
+  wrong only on a *conjunction*: two different journals, disjoint ISSNs,
+  similar names, **and** a dozen or more shared affiliations. That
+  common-versus-conjunction asymmetry is the whole of the argument, and it
+  carries the decision on its own.
 
-  **Mitigations, in order of preference.** (a) Run journal resolution under
-  `FalseMergeCostClass.HIGH`, which declines the auto-link on its own. (b) Add
-  an ISSN-L authority at normalization so a journal's print and electronic
-  ISSNs collapse to one value — then `contradicts=True` becomes correct again
-  for `issn` and can be restored per-adopter through `NamespaceScope`. (c) A
-  cluster-level constraint expressing "these two ISSNs are registered to
-  different titles", which is real negative evidence rather than an inference
-  from disjointness. Not (d) restoring `CONTRADICT`, which re-breaks the
-  common case to patch the rare one.
+  **Two things this trade does NOT buy, contrary to an earlier draft of this
+  ADR.** Both were measured, and both are false as previously written.
+
+  1. **HIGH does not prevent the auto-link; it only moves the threshold.**
+     `shared_affiliations` is an unbounded count weighted `×0.5`, so enough of
+     them clears any fixed budget. On the same fixture HIGH auto-links at 14
+     shared affiliations (p = 0.999187) and 16 (p = 0.999701). It declines at
+     12, which is all the earlier draft actually checked.
+  2. **It does not reliably fail open into something a human sees.** At 12+
+     shared affiliations the STANDARD decision is `AUTO_LINK` with
+     `link_kind=SAME_AS` and `to_route() == AUTO`; HIGH reaches the same state
+     at 14. No adviser and no reviewer is in the loop. The "routable decision"
+     framing holds at low affiliation counts and fails exactly where the risk
+     concentrates.
+
+  A note on framing: calling the old failure "irreversible" inverted this
+  repo's own risk model. The budgets in `ErRoutingThresholds` are on
+  false-*merge* risk, with no false-split counterpart — a wrong split is
+  cheap to correct later and structurally invisible to the gate, whereas a
+  wrong merge contaminates every fact attached to the survivor. The
+  common-case argument stands without the reversibility claim.
+
+  **Mitigations, in order of preference.** (a) Add an ISSN-L authority at
+  normalization so a journal's print and electronic ISSNs collapse to one
+  value — then `contradicts=True` becomes correct again for `issn` and can be
+  restored per-adopter through `NamespaceScope`. This is the only mitigation
+  that removes the exposure rather than repricing it. (b) A cluster-level
+  constraint expressing "these two ISSNs are registered to different titles",
+  which is real negative evidence rather than an inference from disjointness.
+  (c) `FalseMergeCostClass.HIGH` — worth setting, but understand it as raising
+  the bar, not as a floor; it buys roughly two more shared affiliations.
+  Not (d) restoring `CONTRADICT`, which re-breaks the common case to patch the
+  rare one. Whoever picks up the weak-negative-evidence channel (issue #32)
+  should read (a) and (b) as the real fix; this is where the residual exposure
+  lives.
 - Blocking is unchanged and still fans out quadratically on a shared ISSN
   (`ExactIdentifierChannel.block_keys` emits a key per identifier), so every
   pair of papers in a journal is still *proposed*. Those pairs now reliably
