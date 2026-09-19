@@ -68,7 +68,7 @@ def test_promotion_creates_identity_and_is_declared_non_compensable() -> None:
     assert _all_op_types(result.plan) == {CurationOperationType.CREATE_IDENTITY}
     # CREATE_IDENTITY has no inverse — explicitly declared non-compensable (law 8).
     assert INVERSE_OPERATION[CurationOperationType.CREATE_IDENTITY] is None
-    comp = Compensator().compensate(result.plan, against_snapshot=None)
+    comp = Compensator().compensate(result.plan, against_snapshot=1)
     assert comp.fully_compensable is False
     assert len(comp.non_compensable) == 1
 
@@ -92,7 +92,7 @@ def test_merge_picks_deterministic_survivor_and_is_compensable() -> None:
     ]
     # MERGE ↔ SPLIT — fully compensable (law 8).
     assert INVERSE_OPERATION[CurationOperationType.MERGE_IDENTITIES] is CurationOperationType.SPLIT_IDENTITY
-    comp = Compensator().compensate(result.plan, against_snapshot=None)
+    comp = Compensator().compensate(result.plan, against_snapshot=1)
     assert comp.fully_compensable is True
     assert comp.plan is not None
     assert comp.plan.operations[0].type is CurationOperationType.SPLIT_IDENTITY
@@ -122,7 +122,7 @@ def test_split_reassigns_assertions_and_is_compensable() -> None:
     reassign_op = result.plan.operations[1]
     assert reassign_op.payload["from_identity"] == source
     assert reassign_op.reversal_data[INVERSE_PAYLOAD_KEY]["to_identity"] == source  # type: ignore[index]
-    comp = Compensator().compensate(result.plan, against_snapshot=None)
+    comp = Compensator().compensate(result.plan, against_snapshot=1)
     assert comp.fully_compensable is True
 
 
@@ -175,7 +175,7 @@ def test_supersession_is_fully_compensable() -> None:
     new = _assertion("as_new", subject=subject, evidence=("ev_new",))
     result = _planner().plan_supersession(old_assertion=old, new_assertion=new, trigger=_trigger())
     assert result.plan is not None
-    comp = Compensator().compensate(result.plan, against_snapshot=None)
+    comp = Compensator().compensate(result.plan, against_snapshot=1)
     assert comp.fully_compensable is True
 
 
@@ -329,6 +329,6 @@ def test_new_evidence_scenario_targets_then_supersedes_preserving_history() -> N
     assert preserved.status is CurationStatus.SUPERSEDED
     assert preserved.assertion_id == "as_existing"
     # Fully reversible, and every change traces back to the trigger.
-    assert Compensator().compensate(result.plan, against_snapshot=None).fully_compensable is True
+    assert Compensator().compensate(result.plan, against_snapshot=1).fully_compensable is True
     for op in result.plan.operations:
         assert op.reversal_data["trigger_id"] == trigger.trigger_id

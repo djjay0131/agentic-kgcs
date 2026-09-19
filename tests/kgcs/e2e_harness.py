@@ -109,7 +109,7 @@ class E2EGraphStore(MemoryGraphStore):
                     assertion = Assertion.model_validate(
                         {**operation.payload, "curation_epoch": new_epoch}
                     )
-                    self.put_assertion(assertion)
+                    self._upsert_assertion(assertion)
                     touched.append(assertion.subject_identity)
                 elif operation.type is CurationOperationType.RETRACT_ASSERTION:
                     assertion_id = str(operation.payload["assertion_id"])
@@ -142,6 +142,26 @@ class E2EGraphStore(MemoryGraphStore):
             self.rollback()
             raise
         return CommitResult(batch_id=batch.batch_id, committed=True, new_epoch=new_epoch)
+
+    def _upsert_assertion(self, assertion: Assertion) -> None:
+        """Attach by `assertion_id`, replacing in place — never appending a twin.
+
+        ADR-0018. `MemoryGraphStore.put_assertion` appends unconditionally,
+        which is fine while every `ATTACH` carries a fresh id. A *compensating*
+        `ATTACH` does not: restoring a retracted record re-attaches the SAME
+        `assertion_id`. With append semantics the store then holds two rows for
+        one id, and the next `mark_superseded` picks whichever it scans first —
+        measured, compensating a compensation left 2015 and 2014 both `ACTIVE`
+        on one subject and predicate. An `assertion_id` identifies a record;
+        attaching it twice is the same record. Real adapters carry the same
+        obligation (a uniqueness constraint on `assertion_id`).
+        """
+        subject_assertions = self._assertions.setdefault(assertion.subject_identity, [])
+        for index, existing in enumerate(subject_assertions):
+            if existing.assertion_id == assertion.assertion_id:
+                subject_assertions[index] = assertion
+                return
+        subject_assertions.append(assertion)
 
 
 # --- source shapes ----------------------------------------------------------

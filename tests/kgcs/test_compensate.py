@@ -86,7 +86,7 @@ class TestInverseMap:
             [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
         ).plan
         assert plan is not None
-        result = Compensator().compensate(plan, against_snapshot=None)
+        result = Compensator().compensate(plan, against_snapshot=1)
 
         assert result.fully_compensable
         assert result.plan is not None
@@ -104,7 +104,7 @@ class TestInverseMap:
             [make_entity_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
         ).plan
         assert plan is not None
-        result = Compensator().compensate(plan, against_snapshot=None)
+        result = Compensator().compensate(plan, against_snapshot=1)
 
         assert not result.fully_compensable
         assert result.plan is None  # the only op had no inverse
@@ -124,7 +124,7 @@ class TestInverseMap:
     def test_compensable_types_map_to_their_inverse(
         self, forward: CurationOperationType, inverse: CurationOperationType
     ) -> None:
-        result = Compensator().compensate(_handbuilt(forward), against_snapshot=None)
+        result = Compensator().compensate(_handbuilt(forward), against_snapshot=1)
         assert result.plan is not None
         (op,) = result.plan.operations
         assert op.type is inverse
@@ -156,7 +156,7 @@ class TestInverseMap:
             evidence_ids=(),
             policy_version="1",
         )
-        result = Compensator().compensate(plan, against_snapshot=None)
+        result = Compensator().compensate(plan, against_snapshot=1)
         assert result.plan is not None
         (op,) = result.plan.operations
         assert op.payload == {"premerge_members": ["a", "b"]}
@@ -167,10 +167,10 @@ class TestInverseMap:
         # The inverse's own reversal_data offers the forward payload as *its*
         # inverse payload, so a rollback is itself rollback-able.
         first = Compensator().compensate(
-            _handbuilt(CurationOperationType.ATTACH_ASSERTION), against_snapshot=None
+            _handbuilt(CurationOperationType.ATTACH_ASSERTION), against_snapshot=1
         )
         assert first.plan is not None
-        second = Compensator().compensate(first.plan, against_snapshot=None)
+        second = Compensator().compensate(first.plan, against_snapshot=1)
         assert second.plan is not None
         (op,) = second.plan.operations
         assert op.type is CurationOperationType.ATTACH_ASSERTION
@@ -181,7 +181,7 @@ class TestInverseMap:
         [CurationOperationType.CREATE_IDENTITY, CurationOperationType.PROMOTE_ONTOLOGY_TERM],
     )
     def test_non_compensable_types(self, non_inverse: CurationOperationType) -> None:
-        result = Compensator().compensate(_handbuilt(non_inverse), against_snapshot=None)
+        result = Compensator().compensate(_handbuilt(non_inverse), against_snapshot=1)
         assert result.plan is None
         assert result.non_compensable[0].type is non_inverse
 
@@ -213,7 +213,6 @@ class TestSnapshotGuard:
 
         result = Compensator().compensate(plan, against_snapshot=new_epoch)
         assert result.plan is not None
-        assert result.snapshot_guarded is True
         snapshot_guards = [
             p for p in result.plan.preconditions if p.kind == SNAPSHOT_PRECONDITION_KIND
         ]
@@ -262,33 +261,108 @@ class TestSnapshotGuard:
             p.kind == SNAPSHOT_PRECONDITION_KIND for p in record.failed_preconditions
         )
 
-    def test_against_snapshot_none_declares_itself_unguarded(
+    def test_there_is_no_unguarded_path_out_of_compensate(
         self, engine: CurationEngine, auto_scores: CandidateScores
     ) -> None:
+        # F-2: an earlier revision accepted `against_snapshot=None` and handed
+        # back a plan with no guard, which COMMITS against moved state. The
+        # keyword is now non-optional: no argument produces an unguarded plan.
         plan = engine.curate(
             [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
         ).plan
         assert plan is not None
-        result = Compensator().compensate(plan, against_snapshot=None)
-        assert result.plan is not None
-        # No snapshot guard is emitted, and the result says so — a caller must
-        # not auto-execute this, exactly as with `fully_compensable is False`.
-        assert result.snapshot_guarded is False
-        assert not [
-            p for p in result.plan.preconditions if p.kind == SNAPSHOT_PRECONDITION_KIND
-        ]
+        with pytest.raises((TypeError, ValueError)):
+            Compensator().compensate(plan, against_snapshot=None)  # type: ignore[arg-type]
 
-    def test_the_keyword_is_required(
+    def test_the_keyword_cannot_be_omitted(
         self, engine: CurationEngine, auto_scores: CandidateScores
     ) -> None:
-        # Omission is not a default — it is a TypeError. Every caller is made
-        # to state the snapshot the rollback is being built against.
         plan = engine.curate(
             [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
         ).plan
         assert plan is not None
         with pytest.raises(TypeError, match="against_snapshot"):
             Compensator().compensate(plan)  # type: ignore[call-arg]
+
+    def test_a_source_plan_without_a_guard_still_yields_a_guarded_compensation(
+        self,
+    ) -> None:
+        # F-2, the undocumented half: supplying a real epoch used to leave
+        # `preconditions ()` when the source plan carried no snapshot guard —
+        # `snapshot_version` stamped but nothing enforced. The guard is now
+        # synthesized on the plan's first candidate id.
+        plan = CurationPlan(
+            plan_id="pl_unguarded_source",
+            candidate_ids=("cand_first", "cand_second"),
+            snapshot_version="0",
+            operations=(
+                CurationOperation(
+                    operation_id="op_1",
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload={},
+                    reversal_data={"assertion_id": "as_1"},
+                ),
+            ),
+            preconditions=(
+                Precondition(kind="entity_version", subject="kg://g1/identity/AAA", expected="0"),
+            ),
+            evidence_ids=(),
+            policy_version="1",
+        )
+        result = Compensator().compensate(plan, against_snapshot=7)
+        assert result.plan is not None
+        assert [
+            (p.kind, p.subject, p.expected) for p in result.plan.preconditions
+        ] == [(SNAPSHOT_PRECONDITION_KIND, "cand_first", "7")]
+        assert result.plan.snapshot_version == "7"
+
+    def test_every_compensating_plan_carries_exactly_one_snapshot_guard(
+        self, engine: CurationEngine, auto_scores: CandidateScores
+    ) -> None:
+        plan = engine.curate(
+            [
+                make_entity_candidate(graph_id=GRAPH_ID, scores=auto_scores),
+                make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores),
+            ]
+        ).plan
+        assert plan is not None
+        result = Compensator().compensate(plan, against_snapshot=1)
+        assert result.plan is not None
+        assert len(result.plan.preconditions) == 1
+        assert result.plan.preconditions[0].kind == SNAPSHOT_PRECONDITION_KIND
+
+    @pytest.mark.parametrize(
+        "bad", ["banana", "", "1.5", "-1", -1, True, None, "0x1", " 1 x"]
+    )
+    def test_a_non_epoch_snapshot_is_refused(
+        self, engine: CurationEngine, auto_scores: CandidateScores, bad: object
+    ) -> None:
+        # F-3: a free-form string was accepted and became an `expected` no
+        # epoch can ever equal — this ADR's own defect in a new costume.
+        plan = engine.curate(
+            [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
+        ).plan
+        assert plan is not None
+        with pytest.raises((TypeError, ValueError)):
+            Compensator().compensate(plan, against_snapshot=bad)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        ("given", "expected"), [(0, "0"), ("0", "0"), (12, "12"), ("12", "12")]
+    )
+    def test_epoch_accepts_int_and_decimal_string_alike(
+        self,
+        engine: CurationEngine,
+        auto_scores: CandidateScores,
+        given: str | int,
+        expected: str,
+    ) -> None:
+        plan = engine.curate(
+            [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
+        ).plan
+        assert plan is not None
+        result = Compensator().compensate(plan, against_snapshot=given)
+        assert result.plan is not None
+        assert result.plan.preconditions[0].expected == expected
 
     def test_entity_version_guards_are_not_carried(
         self, engine: CurationEngine, auto_scores: CandidateScores
@@ -428,7 +502,7 @@ class TestOrderingAndMixing:
             evidence_ids=(),
             policy_version="1",
         )
-        result = Compensator().compensate(plan, against_snapshot=None)
+        result = Compensator().compensate(plan, against_snapshot=1)
         assert result.plan is not None
         undone = [op.reversal_data["compensates_operation_id"] for op in result.plan.operations]
         assert undone == ["op_second", "op_first"]  # last applied, first undone
@@ -443,7 +517,7 @@ class TestOrderingAndMixing:
             ]
         ).plan
         assert plan is not None
-        result = Compensator().compensate(plan, against_snapshot=None)
+        result = Compensator().compensate(plan, against_snapshot=1)
         assert not result.fully_compensable
         assert result.plan is not None
         assert {op.type for op in result.plan.operations} == {
@@ -501,29 +575,3 @@ class TestDeterminismAndExecution:
         assert record.is_compensation
         assert "RETRACT_ASSERTION" in record.unsupported_types
         assert store.current_epoch() == 0
-
-    def test_a_plan_with_no_snapshot_guard_yields_an_unguarded_compensation(self) -> None:
-        # Nothing to rebase: the source plan carried no snapshot precondition,
-        # so there is no subject to guard and inventing one would be a guess.
-        plan = CurationPlan(
-            plan_id="pl_unguarded",
-            candidate_ids=("cand_1",),
-            snapshot_version="0",
-            operations=(
-                CurationOperation(
-                    operation_id="op_1",
-                    type=CurationOperationType.ATTACH_ASSERTION,
-                    payload={},
-                    reversal_data={"assertion_id": "as_1"},
-                ),
-            ),
-            preconditions=(
-                Precondition(kind="entity_version", subject="kg://g1/identity/AAA", expected="0"),
-            ),
-            evidence_ids=(),
-            policy_version="1",
-        )
-        result = Compensator().compensate(plan, against_snapshot=7)
-        assert result.plan is not None
-        assert result.plan.preconditions == ()
-        assert result.snapshot_guarded is False

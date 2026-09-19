@@ -137,7 +137,7 @@ class TestMergeAndCompensation:
         assert store.current_epoch() == 0
 
         # A compensation IS generated: MERGE ↔ SPLIT, fully reversible.
-        comp = Compensator().compensate(result.plan, against_snapshot=None)
+        comp = Compensator().compensate(result.plan, against_snapshot=1)
         assert comp.fully_compensable is True
         assert comp.plan is not None
         assert comp.plan.operations[0].type is CurationOperationType.SPLIT_IDENTITY
@@ -180,7 +180,6 @@ class TestMergeAndCompensation:
         assert attach_record.new_epoch is not None
         comp = Compensator().compensate(attach_plan, against_snapshot=attach_record.new_epoch)
         assert comp.fully_compensable is True
-        assert comp.snapshot_guarded is True
         assert comp.plan is not None
         assert comp.plan.operations[0].type is CurationOperationType.RETRACT_ASSERTION
 
@@ -329,7 +328,6 @@ class TestSupersessionRollback:
         # Roll it back, guarded against the epoch it committed at.
         comp = Compensator().compensate(result.plan, against_snapshot=record.new_epoch)
         assert comp.fully_compensable is True
-        assert comp.snapshot_guarded is True
         assert comp.plan is not None
         # LIFO: restore the record that was superseded, then retract its
         # replacement.
@@ -348,11 +346,45 @@ class TestSupersessionRollback:
         assert live.object_value == 2015
         assert live.status is CurationStatus.ACTIVE
 
-        # And nothing was deleted: all three transactions remain queryable
-        # (§9 law 10 — rollback never rewrites history).
+        # And nothing was deleted: both records remain queryable, one row per
+        # `assertion_id` (§9 law 10 — rollback never rewrites history). The
+        # compensating ATTACH upserts 2015 in place rather than appending a
+        # second row under the same id; see `_upsert_assertion` and F-1 below.
         history = store.assertions_for(subject, GraphReadOptions(include_superseded=True))
-        assert [(a.object_value, a.status, a.curation_epoch) for a in history] == [
-            (2015, CurationStatus.SUPERSEDED, 1),
+        assert sorted(
+            (a.object_value, a.status, a.curation_epoch) for a in history
+        ) == [
             (2014, CurationStatus.SUPERSEDED, 2),
             (2015, CurationStatus.ACTIVE, 3),
+        ]
+
+        # --- F-1: compensate the compensation. --------------------------------
+        # Reachable only because this change unblocked the rollback path at
+        # all. Measured before the upsert fix, this committed and left 2015 AND
+        # 2014 both ACTIVE on one subject and predicate: the compensating
+        # ATTACH appended a second row under an existing `assertion_id`, and
+        # the redo's `mark_superseded` then scanned to the wrong copy. A
+        # rollback that corrupts canonical state is worse than one that never
+        # runs. Undoing the undo must land exactly back on the post-supersession
+        # state.
+        assert rollback.new_epoch is not None
+        redo = Compensator().compensate(comp.plan, against_snapshot=rollback.new_epoch)
+        assert redo.fully_compensable is True
+        assert redo.plan is not None
+        redo_record = executor.execute(redo.plan, is_compensation=True)
+        assert redo_record.outcome is ExecutionOutcome.COMMITTED
+        assert redo_record.new_epoch == 4
+
+        # Exactly one live assertion — never two contradicting ones.
+        (relive,) = store.assertions_for(subject)
+        assert relive.assertion_id == new.assertion_id
+        assert relive.object_value == 2014
+
+        # No duplicate rows: one per `assertion_id`, and the pair is back to
+        # the state the supersession produced.
+        after = store.assertions_for(subject, GraphReadOptions(include_superseded=True))
+        assert len({a.assertion_id for a in after}) == len(after) == 2
+        assert sorted((a.object_value, a.status) for a in after) == [
+            (2014, CurationStatus.ACTIVE),
+            (2015, CurationStatus.SUPERSEDED),
         ]

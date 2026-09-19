@@ -8,7 +8,7 @@ same `GraphMutationStore`. The `Compensator` reads a committed `CurationPlan`
 and emits a new `CurationPlan` whose operations reverse the originals, in
 reverse order, so the last thing applied is the first thing undone.
 
-Three facts make this honest rather than aspirational:
+Four facts make this honest rather than aspirational:
 
 - **The inverse map is explicit, and some operations have no inverse in the
   v1 vocabulary.** `ATTACH_ASSERTION`↔`RETRACT_ASSERTION`,
@@ -32,21 +32,31 @@ Three facts make this honest rather than aspirational:
   `new_status`/`superseded_at`. A plan whose ops predate the key (hand-built,
   or a third-party producer) still works: the whole `reversal_data` is used,
   as before.
-- **A compensating plan asserts the state it expects to find NOW (ADR-0018).**
-  A precondition is an optimistic-concurrency guard — "is the world still as
-  it was when I computed this?" — and the compensation was computed against
-  the world the *original plan produced*. Carrying the source plan's snapshot
-  guard over made it false by construction (the original plan's own commit is
-  what invalidated it), so every compensation was rejected `STALE` before it
-  reached a store. `compensate` therefore takes a required keyword
-  `against_snapshot`: the epoch the original plan committed at
-  (`ExecutionRecord.new_epoch`). The guard is rebased onto it, so the rollback
-  applies while the graph is still at that epoch and is correctly `STALE` once
-  anything else has committed. Passing `against_snapshot=None` is the explicit
-  "structure only, I am not going to execute this" request: the compensating
-  plan then carries **no** snapshot guard and `snapshot_guarded` is False —
-  a caller must not auto-execute it, exactly as it must not auto-execute a
-  partial (`fully_compensable is False`) rollback.
+- **A compensating plan asserts the state it expects to find NOW, always
+  (ADR-0018).** A precondition is an optimistic-concurrency guard — "is the
+  world still as it was when I computed this?" — and the compensation was
+  computed against the world the *original plan produced*. Carrying the source
+  plan's snapshot guard over made it false by construction (the original
+  plan's own commit is what invalidated it), so every compensation was
+  rejected `STALE` before it reached a store. `compensate` therefore takes a
+  required, **non-optional** `against_snapshot`: the epoch the original plan
+  committed at (`ExecutionRecord.new_epoch`). Every compensating plan carries
+  **exactly one** snapshot precondition expecting it — rebased from the source
+  plan's guard when it had one, synthesized on the plan's first candidate id
+  when it did not. There is no way to obtain an unguarded compensating plan
+  from this module: no `None`, no "the source plan had no guard so neither
+  does this one", no silent fail-open. `against_snapshot` is validated as an
+  epoch (a non-negative integer, or its decimal string); anything else raises
+  `ValueError` rather than becoming an `expected` no epoch can equal.
+- **A compensating `ATTACH_ASSERTION` is an upsert by `assertion_id`, not an
+  append (ADR-0018).** Restoring a record that was retracted re-attaches the
+  *same* `assertion_id`. A store that appends ends up holding two rows for one
+  id, and the next status change picks one of them arbitrarily — measured, a
+  compensation of a compensation left two contradicting assertions both
+  `ACTIVE` on the same subject and predicate. An `assertion_id` identifies a
+  record; attaching it twice is the same record, and an adapter MUST replace
+  in place. This is a requirement on `GraphMutationStore` implementations, not
+  something the `Compensator` can enforce from here.
 
 The `Compensator` is pure and deterministic: inverse operation ids are derived
 from the originals, so a replayed compensation is byte-identical. It generates
@@ -97,6 +107,14 @@ class CompensationResult:
     inverse. `non_compensable` lists the source operations with no v1 inverse;
     when it is non-empty the rollback is *partial* and a caller must not treat
     the compensation as a full reversal.
+
+    There is deliberately no `snapshot_guarded` flag. An earlier revision of
+    ADR-0018 carried one, because `against_snapshot=None` could produce an
+    unguarded plan. That was a disclosed fail-open path with no production
+    consumer — the executor only ever sees a `CurationPlan`, never this result
+    — and disclosing a safety gap instead of closing it is the exact pattern
+    this ADR exists to condemn. `plan` is now guarded by construction or does
+    not exist, so the flag would be a constant.
     """
 
     plan: CurationPlan | None
@@ -107,21 +125,6 @@ class CompensationResult:
         """True iff every source operation had an inverse."""
         return not self.non_compensable
 
-    @property
-    def snapshot_guarded(self) -> bool:
-        """True iff the compensating plan carries a snapshot precondition.
-
-        False when `compensate` was called with `against_snapshot=None` (or
-        the source plan carried no snapshot guard to rebase): the plan is
-        structurally correct but **unguarded**, and applying it would race
-        anything that committed since. Like `fully_compensable`, this is an
-        explicit declaration a caller must honour — do not auto-execute an
-        unguarded compensation; re-derive it with the epoch the original plan
-        committed at (ADR-0018).
-        """
-        return self.plan is not None and any(
-            p.kind == SNAPSHOT_PRECONDITION_KIND for p in self.plan.preconditions
-        )
 
 
 class Compensator:
@@ -143,7 +146,7 @@ class Compensator:
         self._policy_version = policy_version
 
     def compensate(
-        self, plan: CurationPlan, *, against_snapshot: str | int | None
+        self, plan: CurationPlan, *, against_snapshot: str | int
     ) -> CompensationResult:
         """Compute the compensation for `plan`, guarded against `against_snapshot`.
 
@@ -154,19 +157,38 @@ class Compensator:
         `against_snapshot` is the snapshot the compensation expects to find —
         normally the epoch the *original* plan committed at, which
         `PlanExecutor.execute` returns as `ExecutionRecord.new_epoch`. The
-        source plan's snapshot guards are rebased onto it (same kind, same
-        subject, new `expected`) and the compensating plan's own
-        `snapshot_version` is stamped with it. Carrying the *source* plan's
-        expectation instead would be stale by construction — the original
-        plan's commit is precisely what invalidated it (ADR-0018, superseding
-        ADR candidate 0016).
+        returned plan carries **exactly one** snapshot precondition expecting
+        it, and its `snapshot_version` is stamped with it. Carrying the
+        *source* plan's expectation instead would be stale by construction —
+        the original plan's commit is precisely what invalidated it (ADR-0018,
+        superseding ADR candidate 0016).
 
-        The keyword is required, with `None` the explicit "structure only"
-        request: no snapshot guard is emitted and `snapshot_guarded` is False,
-        which a caller must treat as "do not auto-execute", exactly as it
-        treats `fully_compensable is False`. Per-subject `entity_version=0`
-        guards are always dropped (they guarded creation, not reversal).
+        The keyword is required and non-optional. There is no way to ask this
+        method for an unguarded compensating plan, and a source plan that
+        carried no snapshot guard does not yield one either: the guard is
+        synthesized on the plan's first candidate id. Per-subject
+        `entity_version=0` guards are always dropped (they guarded creation,
+        not reversal, and an identity that now exists would fail them
+        forever).
+
+        Raises `ValueError` if `against_snapshot` is not an epoch — a
+        non-negative integer or its decimal string. A free-form string would
+        otherwise be accepted and become an `expected` value no epoch can ever
+        equal, which is the defect this ADR fixes wearing a different hat.
+
+        **What this guard does and does not say.** The executor compares it
+        against one graph-global epoch and ignores `subject`, so it asserts
+        "nothing at all has committed since", not "the records I am about to
+        undo are still as I left them". It is a safe over-approximation: it
+        never permits an unsafe rollback, but any unrelated commit refuses a
+        valid one, and — because nothing here re-derives a compensation
+        against a newer epoch — that refusal is permanent for that plan. The
+        target state is per-subject guards over the records the compensation
+        actually touches (ADR candidate 0003); see ADR-0018 §Consequences.
+        Treat this as a waypoint, not the destination.
         """
+        snapshot = _validated_epoch(against_snapshot)
+
         inverse_ops: list[CurationOperation] = []
         non_compensable: list[CurationOperation] = []
         for op in reversed(plan.operations):
@@ -179,13 +201,12 @@ class Compensator:
         if not inverse_ops:
             return CompensationResult(plan=None, non_compensable=tuple(non_compensable))
 
-        snapshot = None if against_snapshot is None else str(against_snapshot)
         compensating = CurationPlan(
             plan_id=self._ids.plan_id(f"{plan.plan_id}:compensate"),
             candidate_ids=plan.candidate_ids,
-            snapshot_version=snapshot if snapshot is not None else self._snapshot_version,
+            snapshot_version=snapshot,
             operations=tuple(inverse_ops),
-            preconditions=self._rebased_snapshot_preconditions(plan, snapshot),
+            preconditions=self._snapshot_preconditions(plan, snapshot),
             evidence_ids=plan.evidence_ids,
             policy_version=self._policy_version,
         )
@@ -219,22 +240,57 @@ class Compensator:
             },
         )
 
-    def _rebased_snapshot_preconditions(
-        self, plan: CurationPlan, snapshot: str | None
+    def _snapshot_preconditions(
+        self, plan: CurationPlan, snapshot: str
     ) -> tuple[Precondition, ...]:
-        """The source plan's snapshot guards, re-expected against `snapshot`.
+        """Exactly one snapshot guard expecting `snapshot`.
 
-        Empty when `snapshot` is None (see `compensate`) or when the source
-        plan carried no snapshot guard — there is then no subject to guard,
-        and inventing one would be a guess.
+        The source plan's snapshot guards are re-expected against `snapshot`
+        (their `subject` is carried for provenance — the executor ignores it
+        today, see `compensate`). A source plan with no snapshot guard still
+        gets one, synthesized on its first candidate id: `candidate_ids` is
+        non-empty by contract, and "the source plan had no guard" is not a
+        reason to hand back a rollback that applies against anything.
         """
-        if snapshot is None:
-            return ()
-        return tuple(
+        rebased = tuple(
             Precondition(kind=p.kind, subject=p.subject, expected=snapshot)
             for p in plan.preconditions
             if p.kind == SNAPSHOT_PRECONDITION_KIND
         )
+        if rebased:
+            return rebased
+        return (
+            Precondition(
+                kind=SNAPSHOT_PRECONDITION_KIND,
+                subject=plan.candidate_ids[0],
+                expected=snapshot,
+            ),
+        )
+
+
+def _validated_epoch(value: str | int) -> str:
+    """`value` as a decimal epoch string, or `ValueError`.
+
+    A precondition's `expected` is compared to `str(reader.current_epoch())`.
+    Anything that is not an epoch can never equal one, so accepting it would
+    mint a guard that always fails — a fresh instance of the defect ADR-0018
+    fixes. Rejected at the seam instead.
+    """
+    if isinstance(value, bool):  # bool is an int subtype; not an epoch
+        raise ValueError(f"against_snapshot must be an epoch, not {value!r}")
+    if isinstance(value, int):
+        epoch = value
+    else:
+        try:
+            epoch = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"against_snapshot must be an epoch (a non-negative integer or its "
+                f"decimal string), not {value!r}"
+            ) from None
+    if epoch < 0:
+        raise ValueError(f"against_snapshot must be a non-negative epoch, not {value!r}")
+    return str(epoch)
 
 
 __all__ = [

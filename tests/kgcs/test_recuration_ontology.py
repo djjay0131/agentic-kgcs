@@ -166,7 +166,7 @@ def test_promotion_is_declared_non_compensable() -> None:
     lifecycle = _lifecycle()
     plan = lifecycle.plan_promotion(lifecycle.approve(_proposed()), trigger=_trigger())
     assert INVERSE_OPERATION[CurationOperationType.PROMOTE_ONTOLOGY_TERM] is None
-    comp = Compensator().compensate(plan, against_snapshot=None)
+    comp = Compensator().compensate(plan, against_snapshot=1)
     assert comp.fully_compensable is False
     assert comp.non_compensable[0].type is CurationOperationType.PROMOTE_ONTOLOGY_TERM
 
