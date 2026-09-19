@@ -332,7 +332,16 @@ class TestSnapshotGuard:
         assert result.plan.preconditions[0].kind == SNAPSHOT_PRECONDITION_KIND
 
     @pytest.mark.parametrize(
-        "bad", ["banana", "", "1.5", "-1", -1, True, None, "0x1", " 1 x"]
+        "bad",
+        [
+            "banana", "", "1.5", "-1", -1, True, None, "0x1", " 1 x",
+            # Non-integral numbers are rejected, NOT coerced. `int(1.5)` is 1
+            # and `int(-0.4)` is 0 — and 0 is a real epoch, so that one slips
+            # past a non-negative check and yields a guard that is wrong but
+            # *meetable*, which is worse than an unmeetable one. `inf`/`nan`
+            # also made `int()` raise OverflowError rather than ValueError.
+            1.5, -0.4, 2.0, float("inf"), float("nan"),
+        ],
     )
     def test_a_non_epoch_snapshot_is_refused(
         self, engine: CurationEngine, auto_scores: CandidateScores, bad: object
@@ -347,7 +356,12 @@ class TestSnapshotGuard:
             Compensator().compensate(plan, against_snapshot=bad)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
-        ("given", "expected"), [(0, "0"), ("0", "0"), (12, "12"), ("12", "12")]
+        ("given", "expected"),
+        [
+            (0, "0"), ("0", "0"), (12, "12"), ("12", "12"),
+            # Decimal strings normalize — these are unambiguous, not sloppy.
+            (" 7 ", "7"), ("+7", "7"), ("007", "7"),
+        ],
     )
     def test_epoch_accepts_int_and_decimal_string_alike(
         self,

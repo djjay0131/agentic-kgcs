@@ -235,8 +235,11 @@ Every existing caller of `compensate()` is broken today — none of their
 compensations can apply — so there is no behaviour worth preserving by default,
 and a default would have to be either the old lie or a silent unguarded apply.
 Making each caller state the snapshot converts an invisible failure into a
-compile-time question. There are eight call sites in this repo; the change is
-one keyword each.
+compile-time question. There are **19** call sites in this repo and the change
+is one keyword each — and every one of them is in `tests/`, **none in `src/`**.
+That distribution is itself the evidence: nothing in production has ever called
+the rollback path, which is how a non-functional one stayed non-functional
+through a v1 completion review.
 
 Separating the inverse payload from the lineage is forced by the contract, not
 chosen for tidiness. An `ATTACH` payload *is* an `Assertion`, `Assertion` is
@@ -341,6 +344,17 @@ view. Revisit if `kg_contracts` gains `include_revoked`.
   wrongly-graded ADR inside the fix for a wrongly-graded ADR; it is corrected
   here. `pyproject.toml` is untouched — the bump lands in a dedicated
   `chore(release)` PR (issue #31).
+
+  **Ship `2.0.0` standalone; do not fold it into the `1.1.0` queued on #31.**
+  The two changes want different announcements. ADR-0017 changed *outcomes* on
+  a surface that worked, which a minor bump plus a release note reaches. This
+  changes a *serialisation* shape on a surface that worked — `reversal_data`
+  was always readable — and the break is **silent**: a consumer using `.get()`
+  reverses nothing, at rollback time, with no exception. A silent break is
+  precisely what a major version number exists to announce. Folding it behind
+  `1.1.0` would leave the version number carrying no information about the one
+  change a reader most needs to be warned about — which is the same failure
+  mode as candidate 0016 recording a non-functional path as a working one.
 - `reversal_data`'s shape changed for `ATTACH`/`RETRACT`/`MERGE`/`SPLIT`/
   `REASSIGN`: payload material moved under `inverse_payload`. `candidate_id`,
   `identity_id`, `term_id` and the trigger-provenance block stay flat. Anything
@@ -349,6 +363,28 @@ view. Revisit if `kg_contracts` gains `include_revoked`.
   it does not make an un-migrated producer's payload correct.
 - A rolled-back attach is marked `SUPERSEDED` though nothing superseded it — a
   known imprecision, accepted against the read-visibility cost above.
+- **Decision 5 is a stated obligation, not an enforced one — and the artifact
+  undersells it.** The upsert requirement is acceptable as a *disposition*:
+  the `Compensator` genuinely cannot enforce what a store does. But the
+  reference an adapter author will actually copy is
+  `kg_contracts.testing.memory.MemoryGraphStore`, which **appends** and so does
+  not conform, while the conforming implementation
+  (`E2EGraphStore._upsert_assertion`) lives in `tests/` and ships in no
+  package. The honest summary is "we told you", where the repo elsewhere
+  manages "we checked".
+
+  **There is an enforceable seam, and this ADR did not use it.**
+  `PlanExecutor` already holds a `GraphReader` and already knows
+  `is_compensation=True`. A post-apply check — after a compensating batch
+  commits, read back the touched subjects and assert no `assertion_id` appears
+  twice — needs **no new `ExecutionOutcome` value** and no contract change, and
+  would convert the obligation into a verified property at the one seam every
+  mutation passes through. It is left out of this change only to keep its
+  scope to the defect and its direct consequence. Whoever picks this up should
+  not have to rediscover the seam: it is `PlanExecutor.execute`, in the
+  `is_compensation` branch, after `_classify` returns `COMMITTED`. Widening
+  `MemoryGraphStore` to upsert is the upstream half, alongside ADR candidate
+  0015.
 
 ### Risks
 
@@ -384,6 +420,18 @@ view. Revisit if `kg_contracts` gains `include_revoked`.
   subject; `Precondition.subject` is carried through today for provenance so
   the plans do not have to change shape when it lands. Recorded here so this
   decision reads as a step, not an answer.
+
+  **How urgent that step is, precisely.** On an adapter that honours Decision
+  5, the upsert makes the inverse operations **idempotent** — re-applying a
+  compensating `ATTACH` or `RETRACT` converges on the same record rather than
+  accumulating rows — so an over-broad guard cannot produce a wrong state, only
+  refuse a right one. That makes the graph-global guard a **liveness** problem,
+  not a safety one: valid rollbacks get stuck, canonical state does not get
+  corrupted. Per-subject guards are therefore an availability improvement to
+  schedule, not a correctness hole to rush. The dependency is worth stating
+  plainly, because it runs the other way from intuition: it is Decision 5 —
+  an obligation on adapters — that buys the safety margin here, so an adapter
+  that does *not* upsert loses both properties at once.
 - `superseded_at = recorded_at` gives a rolled-back record a zero-width
   transaction interval. That is the intended bitemporal reading, but an adapter
   that assumes `superseded_at > recorded_at` strictly will need to accept

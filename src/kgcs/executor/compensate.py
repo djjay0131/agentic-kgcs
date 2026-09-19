@@ -173,8 +173,11 @@ class Compensator:
 
         Raises `ValueError` if `against_snapshot` is not an epoch — a
         non-negative integer or its decimal string. A free-form string would
-        otherwise be accepted and become an `expected` value no epoch can ever
-        equal, which is the defect this ADR fixes wearing a different hat.
+        otherwise become an `expected` value no epoch can ever equal, which is
+        the defect this ADR fixes wearing a different hat; and a non-integral
+        number is *rejected, not rounded*, because `int(-0.4)` is `0`, which is
+        a real epoch — a wrong-but-meetable guard, the worse of the two
+        failures.
 
         **What this guard does and does not say.** The executor compares it
         against one graph-global epoch and ignores `subject`, so it asserts
@@ -275,12 +278,30 @@ def _validated_epoch(value: str | int) -> str:
     Anything that is not an epoch can never equal one, so accepting it would
     mint a guard that always fails — a fresh instance of the defect ADR-0018
     fixes. Rejected at the seam instead.
+
+    Non-integral numbers are **rejected, not coerced**, which is the stricter
+    of the two obvious readings and the right one. `int()` would have turned
+    `1.5` into `'1'` and `-0.4` into `'0'` — and `'0'` is a real epoch, so that
+    one slipped past the non-negative check and produced a guard that is wrong
+    but *meetable*. A meetable guard on the wrong epoch is worse than an
+    unmeetable one: the unmeetable guard merely refuses, while the meetable one
+    can let a rollback commit against a state it never inspected. `float`
+    (including `inf`/`nan`, where `int()` raises `OverflowError` rather than
+    `ValueError`) is therefore refused outright rather than rounded into
+    something plausible.
+
+    Decimal strings are still normalized rather than rejected — `' 7 '`,
+    `'+7'`, `'007'` all mean epoch 7 and there is no ambiguity to resolve.
     """
-    if isinstance(value, bool):  # bool is an int subtype; not an epoch
-        raise ValueError(f"against_snapshot must be an epoch, not {value!r}")
+    if isinstance(value, bool) or isinstance(value, float):
+        # bool is an int subtype and float is silently lossy; neither is an epoch.
+        raise ValueError(
+            f"against_snapshot must be an epoch (a non-negative integer or its "
+            f"decimal string), not {value!r}"
+        )
     if isinstance(value, int):
         epoch = value
-    else:
+    elif isinstance(value, (str, bytes)):
         try:
             epoch = int(value)
         except (TypeError, ValueError):
@@ -288,6 +309,11 @@ def _validated_epoch(value: str | int) -> str:
                 f"against_snapshot must be an epoch (a non-negative integer or its "
                 f"decimal string), not {value!r}"
             ) from None
+    else:
+        raise ValueError(
+            f"against_snapshot must be an epoch (a non-negative integer or its "
+            f"decimal string), not {value!r}"
+        )
     if epoch < 0:
         raise ValueError(f"against_snapshot must be a non-negative epoch, not {value!r}")
     return str(epoch)

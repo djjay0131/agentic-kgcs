@@ -63,6 +63,22 @@ deferred: the `against_snapshot=None` fail-open path and the undocumented
 "real epoch, still no guard" case. `snapshot_guarded` is gone — it had zero
 production consumers, since the executor only ever sees a `CurationPlan`.
 
+Verification round 3 confirmed the involution to depth 3 (`e2→e3→e4→e5`, two
+rows and no duplicate id at every depth, LIVE alternating 2014↔2015) and
+sharpened one point in our favour: because a conforming adapter's upsert makes
+the inverses **idempotent**, the graph-global guard is a **liveness** problem,
+not a safety one — over-broad guards stick valid rollbacks but cannot corrupt
+state, so per-subject guards (candidate 0003) are an availability improvement
+to schedule rather than a correctness hole. Recorded in the ADR, along with the
+one gap left open: Decision 5's upsert is a *stated* obligation whose only
+conforming implementation lives in `tests/`, while `PlanExecutor` already holds
+a `GraphReader` and knows `is_compensation=True` — a post-apply duplicate-id
+check there needs no new `ExecutionOutcome` and would make it verified rather
+than asserted. Named in the ADR so it is not rediscovered. Also closed: `int()`
+**coerced** rather than rejected (`1.5→'1'`, `-0.4→'0'`, the latter slipping
+past the non-negative check into a wrong-but-*meetable* guard, which is worse
+than an unmeetable one); floats are now refused outright.
+
 490 → 519 passing (+29 net). **19** pre-existing `compensate()` call sites
 gained the keyword — all in `tests/`, **zero in `src/`**, which is itself the
 tell: nothing in production ever called the rollback path. 3 tests changed to
@@ -73,8 +89,9 @@ Release: `pyproject.toml` is deliberately untouched — this repo bumps in a
 dedicated `chore(release)` PR (issue #31, convention set by #29). This change
 is **source-breaking**: `Compensator.compensate(plan)` no longer compiles, and
 the `reversal_data` shape moved payload material under `inverse_payload`.
-Strict semver on a tagged `1.0.0` makes that **2.0.0**, and that is the
-recommendation. The "nothing broke, compensation never worked" counter-argument
+Strict semver on a tagged `1.0.0` makes that **2.0.0**, shipped **standalone**
+rather than folded into the `1.1.0` queued on #31 — folding it would leave the
+version number silent about the one break a reader most needs warning of. The "nothing broke, compensation never worked" counter-argument
 covers only the signature: `reversal_data` is a *serialisation* shape, and
 reading it always worked, so a flat reader breaks **silently** at rollback time.
 An earlier revision of ADR-0018 graded this *minor*, contradicting the PR body —

@@ -408,9 +408,13 @@ def _assertion_payload(assertion: Assertion) -> dict[str, object]:
 def retract_inverse_payload(assertion: Assertion, subject_identity: str) -> dict[str, object]:
     """The `RETRACT_ASSERTION` payload that undoes attaching `assertion`.
 
-    The *same shape* a forward supersession emits — `assertion_id`,
+    Four of the five keys a forward supersession emits — `assertion_id`,
     `subject_identity`, `new_status`, `superseded_at` — so a store applies a
     compensating retract through exactly the path it applies a planned one.
+    The fifth, `superseded_by`, is deliberately absent: a rollback has no
+    superseding assertion, and naming one would be a lie. "The same shape"
+    would overclaim; what holds is that every field the operation is *defined*
+    by is present, and the only omission is the one that does not apply.
     Before ADR-0018 the inverse carried only the two identifiers, and a store
     had to invent the rest (the E2E harness substituted a fixed instant); a
     reversal that loses the fields the operation is defined by is a lossy
