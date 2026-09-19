@@ -63,6 +63,19 @@ SNAPSHOT_PRECONDITION_KIND = "snapshot_version"
 ENTITY_VERSION_PRECONDITION_KIND = "entity_version"
 DEFAULT_POLICY_VERSION = "1"
 
+#: The `reversal_data` key holding the *inverse operation's payload*.
+#:
+#: `reversal_data` carries two different things, and conflating them is a bug
+#: (ADR-0018): the payload the reversing operation needs, and the lineage /
+#: provenance of the forward operation (`candidate_id`, `trigger_id`,
+#: `evidence_ids`, matcher/adviser/policy versions). `kgcs.executor.compensate`
+#: reads the payload from this key; everything else in the dict stays lineage
+#: and never reaches an operation payload. Defined here, with the other plan
+#: vocabulary, because both producers (this planner and
+#: `kgcs.recuration.evolution`) and the consumer need it and the consumer
+#: already imports from this module.
+INVERSE_PAYLOAD_KEY = "inverse_payload"
+
 
 @dataclass(frozen=True)
 class ResolvedCandidate:
@@ -210,6 +223,9 @@ class CurationPlanner:
             ),
             type=CurationOperationType.CREATE_IDENTITY,
             payload=_entity_payload(entity),
+            # No INVERSE_PAYLOAD_KEY, deliberately: CREATE_IDENTITY has no
+            # inverse in the v1 vocabulary (INVERSE_OPERATION maps it to None),
+            # so there is no inverse payload to carry. Both fields are lineage.
             reversal_data={"identity_id": identity_id, "candidate_id": candidate.candidate_id},
         )
 
@@ -312,8 +328,7 @@ class CurationPlanner:
             type=CurationOperationType.ATTACH_ASSERTION,
             payload=_assertion_payload(assertion),
             reversal_data={
-                "assertion_id": assertion.assertion_id,
-                "subject_identity": subject_identity,
+                INVERSE_PAYLOAD_KEY: retract_inverse_payload(assertion, subject_identity),
                 "candidate_id": candidate.candidate_id,
             },
         )
@@ -388,3 +403,39 @@ def _assertion_payload(assertion: Assertion) -> dict[str, object]:
     payload = assertion.model_dump(mode="json")
     payload.pop("curation_epoch", None)
     return payload
+
+
+def retract_inverse_payload(assertion: Assertion, subject_identity: str) -> dict[str, object]:
+    """The `RETRACT_ASSERTION` payload that undoes attaching `assertion`.
+
+    The *same shape* a forward supersession emits — `assertion_id`,
+    `subject_identity`, `new_status`, `superseded_at` — so a store applies a
+    compensating retract through exactly the path it applies a planned one.
+    Before ADR-0018 the inverse carried only the two identifiers, and a store
+    had to invent the rest (the E2E harness substituted a fixed instant); a
+    reversal that loses the fields the operation is defined by is a lossy
+    inverse, not a rollback.
+
+    Two deliberate choices, both recorded in ADR-0018:
+
+    - **`new_status=SUPERSEDED`, not `REVOKED`.** `REVOKED` is the semantically
+      purer reading of "this attachment is withdrawn" — nothing superseded it —
+      but the canonical read surface hides only `SUPERSEDED` by default
+      (`GraphReadOptions.include_superseded`; `kg_contracts` issue #8 records
+      that there is deliberately no `include_revoked`). A rolled-back record
+      marked `REVOKED` would stay visible to an ordinary read, which is the
+      opposite of a rollback. Changing that is a read-semantics ADR upstream,
+      not a decision to smuggle in here.
+    - **`superseded_at` is the assertion's own `recorded_at`.** The compensator
+      is pure and holds no clock (a replayed compensation must be
+      byte-identical), so the instant must come from the plan. Closing the
+      record's transaction-time interval at the instant it opened is the exact
+      bitemporal statement a rollback makes: as of any query time, this record
+      was never validly live. History is preserved, not rewritten (§9 law 10).
+    """
+    return {
+        "assertion_id": assertion.assertion_id,
+        "subject_identity": subject_identity,
+        "new_status": CurationStatus.SUPERSEDED.value,
+        "superseded_at": assertion.recorded_at.isoformat(),
+    }

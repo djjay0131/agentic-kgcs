@@ -1,6 +1,6 @@
 # ADR candidate 0016: an executed compensation needs re-stamping against the current snapshot
 
-Status: Accepted (KGCS-local durable decision, v1 — 2026-09-17)
+Status: Superseded by ADR-0018 (2026-09-19)
 Date: 2026-08-22
 Surfaced by: Wave 8 (KGIS→KGCS end-to-end), `kgcs.executor.compensate`
 
@@ -42,3 +42,23 @@ precondition enforcement) and 0010 (ClusterSnapshot vs Precondition).
 PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
 
 See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.
+
+## Superseded (2026-09-19) — the accepted behaviour was a defect
+
+[ADR-0018](../0018-compensating-plans-assert-post-application-state.md)
+supersedes this candidate. Its "Problem" section is accurate and its
+"possible future contract improvement" named the right remedy; what was wrong
+was the **grading**. This was promoted at v1 completion as a durable
+KGCS-local decision — an ergonomics gap with a working manual step. It was
+not: because `PlanExecutor` enforces the plan-level snapshot guard itself
+whenever the store is also a `GraphReader` (the reference `MemoryGraphStore`
+is), a carried guard is false by construction and **every** compensation was
+rejected `STALE` before reaching a store. Compensation was non-functional, not
+merely inconvenient, and the "local workaround" was the only reason any
+rollback had ever been observed to apply.
+
+Two further defects sat behind it, undiscovered precisely because nothing ever
+got past the guard to execute an inverse: the `RETRACT`→`ATTACH` inverse
+payload could not validate as an `Assertion`, and the `ATTACH`→`RETRACT`
+inverse dropped `new_status`/`superseded_at`. All three are fixed together in
+ADR-0018; see its Context for the measured reproductions.

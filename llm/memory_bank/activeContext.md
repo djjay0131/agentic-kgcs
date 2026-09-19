@@ -1,5 +1,70 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-19 (post-v1 defect fix): **ADR-0018 — a compensating plan
+asserts post-application state, and carries a payload a store can apply.**
+Branch `fix/compensation-precondition-and-inverse-payload`, opened after the
+`agentic-kg` adopter hit three defects building a Neo4j `GraphMutationStore`.
+All three reproduce against KGCS's own reference store, and they are **one**
+defect with three faces.
+
+The gate: `Compensator` carried the *source* plan's snapshot precondition into
+the compensating plan. The executor enforces that guard itself against the
+graph's current epoch whenever the store is also a `GraphReader` — the
+reference `MemoryGraphStore` is — so the original plan's own commit invalidated
+the guard its own rollback inherited. Measured on `v1.0.0`: source plan guard
+`('snapshot_version','g1','0')`, forward `COMMITTED` at epoch 1, compensating
+plan guard **still `'0'`**, compensation `STALE`, store untouched.
+**Compensation has never been executable against a readable store.**
+
+Behind the gate, two malformed inverses nobody could reach. `RETRACT`→`ATTACH`
+produced a payload with 17 `Assertion` validation errors (10 required fields
+missing — `predicate` among them — and 7 `extra_forbidden` from the provenance
+block that shared `reversal_data`). `ATTACH`→`RETRACT` dropped `new_status` and
+`superseded_at`, at both producers. Root cause of both: `reversal_data` was
+simultaneously the inverse payload and the forward op's lineage, and
+`_invert` used the whole dict as the payload.
+
+Fix. `compensate(plan, *, against_snapshot)` — **required** keyword, no default
+— rebases the source plan's snapshot guards onto the epoch the original plan
+committed at (`ExecutionRecord.new_epoch`); `None` means "structure only" and
+sets `CompensationResult.snapshot_guarded = False`. `INVERSE_PAYLOAD_KEY`
+separates the inverse payload from the lineage in `reversal_data`, with a
+fallback to the whole dict for un-migrated producers. Shared
+`retract_inverse_payload` gives both producers a complete `RETRACT` payload
+(`new_status=SUPERSEDED`, `superseded_at=recorded_at`; no `superseded_by` —
+a rollback has nothing superseding it); the supersession `RETRACT`'s inverse is
+the full pre-retraction assertion dump.
+
+**Two artifacts had pinned the defect as correct.**
+`test_executed_attach_is_rolled_back_by_its_compensation` asserted the
+compensation was `STALE` and then hand-rebuilt the precondition to proceed; and
+**ADR candidate 0016** described defect A exactly and, at v1 completion, *accepted
+it as a durable KGCS-local decision* — graded an ergonomics gap when it was a
+non-functional path. Candidate 0016 is now `Superseded by ADR-0018`. The E2E
+harness's `superseded_at` fallback (a fixed instant when none was carried) was
+the third piece of cover and is removed.
+
+A supersession now rolls back end to end for the first time: 2015 superseded by
+2014 at epoch 2, rolled back at epoch 3 to 2015 live / 2014 `SUPERSEDED`, all
+three transactions still queryable (§9 law 10). Both directions are tested — the
+rollback commits when the graph is where it should be, and is `STALE` when a
+concurrent writer got there first.
+
+490 → 505 passing (+15 net; 8 call sites gained the keyword, 3 tests changed to
+read the new `reversal_data` shape, 1 rewritten because it encoded the defect).
+ruff clean, mypy strict clean (49 files), governance 4/4.
+
+Release: `pyproject.toml` is deliberately untouched — this repo bumps in a
+dedicated `chore(release)` PR (issue #31, convention set by #29). This change
+is **source-breaking**: `Compensator.compensate(plan)` no longer compiles, and
+the `reversal_data` shape moved payload material under `inverse_payload`.
+Strict semver on a tagged `1.0.0` makes that a **major** bump, `2.0.0`. The
+counter-argument — and it is the owner's call, not this PR's — is that the
+compensation path was *non-functional* on every readable store, so there was no
+working API to break; on that reading it folds into the `1.1.0` already queued
+on #31. Either way it must appear in the release note: an adopter reading a
+payload field flat off `reversal_data` is affected even though nothing raises.
+
 Update 2026-09-18 (post-v1 defect fix, rev 2 after review): **ADR-0017 —
 identifier strength is entity-type relative.** Branch
 `fix/container-identifier-strength` (PR #30), opened against tagged `v1.0.0`

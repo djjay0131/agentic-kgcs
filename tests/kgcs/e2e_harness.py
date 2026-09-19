@@ -113,12 +113,21 @@ class E2EGraphStore(MemoryGraphStore):
                     touched.append(assertion.subject_identity)
                 elif operation.type is CurationOperationType.RETRACT_ASSERTION:
                     assertion_id = str(operation.payload["assertion_id"])
-                    # A supersession plan pins `superseded_at`; a *compensating*
-                    # RETRACT (from an ATTACH's reversal_data) does not — rollback
-                    # is a soft-undo (status change, history preserved), so a
-                    # fixed instant stands in when none is carried.
-                    raw = operation.payload.get("superseded_at")
-                    superseded_at = datetime.fromisoformat(str(raw)) if raw is not None else T0
+                    # Every RETRACT payload — planned supersession or
+                    # compensating rollback — carries `new_status` and
+                    # `superseded_at` (ADR-0018). This store deliberately does
+                    # NOT substitute a default for a missing one: a reversal
+                    # that loses the fields the operation is defined by is a
+                    # lossy inverse, and papering over it here is what hid the
+                    # defect. A payload missing them is a producer bug and
+                    # raises, which the executor reports rather than crashing.
+                    new_status = CurationStatus(operation.payload["new_status"])
+                    if new_status is not CurationStatus.SUPERSEDED:
+                        raise NotImplementedError(
+                            f"E2EGraphStore applies RETRACT_ASSERTION only as a "
+                            f"SUPERSEDED status change, not {new_status.value}"
+                        )
+                    superseded_at = datetime.fromisoformat(str(operation.payload["superseded_at"]))
                     self.mark_superseded(assertion_id, superseded_at)
                     touched.append(str(operation.payload["subject_identity"]))
                 else:

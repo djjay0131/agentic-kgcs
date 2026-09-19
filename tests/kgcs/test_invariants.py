@@ -152,5 +152,5 @@ def test_compensation_never_mutates_the_graph_by_itself(
     ).plan
     assert plan is not None
     store = MemoryGraphStore()
-    Compensator().compensate(plan)  # generating a compensation touches no graph
+    Compensator().compensate(plan, against_snapshot=None)  # generating a compensation touches no graph
     assert store.current_epoch() == 0

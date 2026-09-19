@@ -139,6 +139,7 @@ from kgcs.observability import (
     should_raise_threshold,
 )
 from kgcs.planner import (
+    INVERSE_PAYLOAD_KEY,
     CurationPlanner,
     PlannedOperation,
     PlanResult,
@@ -345,6 +346,7 @@ __all__ = [
     "Compensator",
     "CompensationResult",
     "INVERSE_OPERATION",
+    "INVERSE_PAYLOAD_KEY",
     # re-curation + concept/ontology evolution (Wave 5 / DG-1 / DG-3)
     "TriggerKind",
     "VersionContext",

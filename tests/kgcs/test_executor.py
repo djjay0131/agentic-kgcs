@@ -15,6 +15,7 @@ from kg_contracts.testing.memory import MemoryGraphStore
 
 from helpers import GRAPH_ID
 from kgcs import (
+    INVERSE_PAYLOAD_KEY,
     CurationEngine,
     DerivedIdFactory,
     ExecutionOutcome,
@@ -146,7 +147,9 @@ class TestStalePlan:
         assert second.failed_preconditions
         assert store.current_epoch() == 1  # exactly one commit, no double-attach
         # and nothing was double-attached to canonical state
-        subject = str(plan.operations[0].reversal_data["subject_identity"])
+        inverse_payload = plan.operations[0].reversal_data[INVERSE_PAYLOAD_KEY]
+        assert isinstance(inverse_payload, dict)
+        subject = str(inverse_payload["subject_identity"])
         assert len(store.assertions_for(subject)) == 1
 
     def test_executor_enforces_snapshot_precondition_against_epoch(

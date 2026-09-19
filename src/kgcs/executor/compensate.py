@@ -8,7 +8,7 @@ same `GraphMutationStore`. The `Compensator` reads a committed `CurationPlan`
 and emits a new `CurationPlan` whose operations reverse the originals, in
 reverse order, so the last thing applied is the first thing undone.
 
-Two facts make this honest rather than aspirational:
+Three facts make this honest rather than aspirational:
 
 - **The inverse map is explicit, and some operations have no inverse in the
   v1 vocabulary.** `ATTACH_ASSERTION`↔`RETRACT_ASSERTION`,
@@ -21,21 +21,42 @@ Two facts make this honest rather than aspirational:
   non-compensable* (and a caller must block auto-execution of a rollback that
   cannot fully reverse).
 - **The reversal payload comes from the contract's own `reversal_data`, not a
-  guess.** Each inverse operation's payload is the original operation's
-  `reversal_data` (which the planner populated with exactly what a reversal
-  needs — e.g. an `ATTACH_ASSERTION` records the `assertion_id` a
-  `RETRACT_ASSERTION` must target), and the inverse's own `reversal_data`
-  carries the original type and payload so the compensation is itself
-  reversible.
+  guess — and it is a *payload*, not the whole dict.** A producer puts the
+  inverse operation's payload under `INVERSE_PAYLOAD_KEY`; the rest of
+  `reversal_data` is lineage and provenance (`candidate_id`, `trigger_id`,
+  `evidence_ids`, matcher/adviser/policy versions) that names *why* the
+  forward operation happened and must never leak into the inverse's payload.
+  ADR-0018 records why: when the whole dict was used verbatim, a compensating
+  `ATTACH_ASSERTION`'s payload was a provenance block rather than an
+  `Assertion`, and a compensating `RETRACT_ASSERTION` silently dropped
+  `new_status`/`superseded_at`. A plan whose ops predate the key (hand-built,
+  or a third-party producer) still works: the whole `reversal_data` is used,
+  as before.
+- **A compensating plan asserts the state it expects to find NOW (ADR-0018).**
+  A precondition is an optimistic-concurrency guard — "is the world still as
+  it was when I computed this?" — and the compensation was computed against
+  the world the *original plan produced*. Carrying the source plan's snapshot
+  guard over made it false by construction (the original plan's own commit is
+  what invalidated it), so every compensation was rejected `STALE` before it
+  reached a store. `compensate` therefore takes a required keyword
+  `against_snapshot`: the epoch the original plan committed at
+  (`ExecutionRecord.new_epoch`). The guard is rebased onto it, so the rollback
+  applies while the graph is still at that epoch and is correctly `STALE` once
+  anything else has committed. Passing `against_snapshot=None` is the explicit
+  "structure only, I am not going to execute this" request: the compensating
+  plan then carries **no** snapshot guard and `snapshot_guarded` is False —
+  a caller must not auto-execute it, exactly as it must not auto-execute a
+  partial (`fully_compensable is False`) rollback.
 
 The `Compensator` is pure and deterministic: inverse operation ids are derived
 from the originals, so a replayed compensation is byte-identical. It generates
 plans; it never applies them — that is `PlanExecutor`'s job, and on the Plan-1
 reference store a `RETRACT_ASSERTION`/`SPLIT_IDENTITY` compensation currently
-returns `UNSUPPORTED_OPERATION` (those op types land in later waves), which the
-executor reports explicitly rather than crashing.
+returns `UNSUPPORTED_OPERATION` (ADR candidate 0015), which the executor
+reports explicitly rather than crashing.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from kg_contracts.curation import (
@@ -46,7 +67,11 @@ from kg_contracts.curation import (
 )
 
 from kgcs.ids import DerivedIdFactory, IdFactory
-from kgcs.planner import DEFAULT_POLICY_VERSION, SNAPSHOT_PRECONDITION_KIND
+from kgcs.planner import (
+    DEFAULT_POLICY_VERSION,
+    INVERSE_PAYLOAD_KEY,
+    SNAPSHOT_PRECONDITION_KIND,
+)
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 
 #: The reversing operation type for each `CurationOperationType`, or `None`
@@ -82,6 +107,22 @@ class CompensationResult:
         """True iff every source operation had an inverse."""
         return not self.non_compensable
 
+    @property
+    def snapshot_guarded(self) -> bool:
+        """True iff the compensating plan carries a snapshot precondition.
+
+        False when `compensate` was called with `against_snapshot=None` (or
+        the source plan carried no snapshot guard to rebase): the plan is
+        structurally correct but **unguarded**, and applying it would race
+        anything that committed since. Like `fully_compensable`, this is an
+        explicit declaration a caller must honour — do not auto-execute an
+        unguarded compensation; re-derive it with the epoch the original plan
+        committed at (ADR-0018).
+        """
+        return self.plan is not None and any(
+            p.kind == SNAPSHOT_PRECONDITION_KIND for p in self.plan.preconditions
+        )
+
 
 class Compensator:
     """Builds a compensating `CurationPlan` from a committed plan.
@@ -101,15 +142,30 @@ class Compensator:
         self._snapshot_version = snapshot_version
         self._policy_version = policy_version
 
-    def compensate(self, plan: CurationPlan) -> CompensationResult:
-        """Compute the compensation for `plan`.
+    def compensate(
+        self, plan: CurationPlan, *, against_snapshot: str | int | None
+    ) -> CompensationResult:
+        """Compute the compensation for `plan`, guarded against `against_snapshot`.
 
         Operations are reversed in LIFO order. Each compensable operation
         becomes its inverse; each operation with no v1 inverse is collected in
         `non_compensable` and contributes nothing to the compensating plan.
-        The plan-level snapshot precondition (if any) is carried over as
-        provenance; per-subject `entity_version=0` guards are dropped (they
-        guarded creation, not reversal).
+
+        `against_snapshot` is the snapshot the compensation expects to find —
+        normally the epoch the *original* plan committed at, which
+        `PlanExecutor.execute` returns as `ExecutionRecord.new_epoch`. The
+        source plan's snapshot guards are rebased onto it (same kind, same
+        subject, new `expected`) and the compensating plan's own
+        `snapshot_version` is stamped with it. Carrying the *source* plan's
+        expectation instead would be stale by construction — the original
+        plan's commit is precisely what invalidated it (ADR-0018, superseding
+        ADR candidate 0016).
+
+        The keyword is required, with `None` the explicit "structure only"
+        request: no snapshot guard is emitted and `snapshot_guarded` is False,
+        which a caller must treat as "do not auto-execute", exactly as it
+        treats `fully_compensable is False`. Per-subject `entity_version=0`
+        guards are always dropped (they guarded creation, not reversal).
         """
         inverse_ops: list[CurationOperation] = []
         non_compensable: list[CurationOperation] = []
@@ -123,12 +179,13 @@ class Compensator:
         if not inverse_ops:
             return CompensationResult(plan=None, non_compensable=tuple(non_compensable))
 
+        snapshot = None if against_snapshot is None else str(against_snapshot)
         compensating = CurationPlan(
             plan_id=self._ids.plan_id(f"{plan.plan_id}:compensate"),
             candidate_ids=plan.candidate_ids,
-            snapshot_version=self._snapshot_version,
+            snapshot_version=snapshot if snapshot is not None else self._snapshot_version,
             operations=tuple(inverse_ops),
-            preconditions=self._carry_snapshot_precondition(plan),
+            preconditions=self._rebased_snapshot_preconditions(plan, snapshot),
             evidence_ids=plan.evidence_ids,
             policy_version=self._policy_version,
         )
@@ -139,23 +196,50 @@ class Compensator:
     ) -> CurationOperation:
         """Build the inverse of one operation.
 
-        The inverse's payload is the original's `reversal_data` (the contract's
-        "what is needed to undo this"), and the inverse's own `reversal_data`
-        records the original type and payload so the compensation is itself
-        reversible and traceable back to what it undid.
+        The inverse's payload is the original's `reversal_data[INVERSE_PAYLOAD_KEY]`
+        — the contract's "what is needed to undo this", separated from the
+        lineage/provenance that shares the dict. Operations whose producer
+        predates the key fall back to the whole `reversal_data`, which is what
+        this did before ADR-0018. The inverse's own `reversal_data` records the
+        original type and payload (and offers that payload as *its* inverse
+        payload) so the compensation is itself reversible and traceable back to
+        what it undid.
         """
+        raw = op.reversal_data.get(INVERSE_PAYLOAD_KEY)
+        payload = dict(raw) if isinstance(raw, Mapping) else dict(op.reversal_data)
         return CurationOperation(
             operation_id=self._ids.operation_id(f"{op.operation_id}:compensate"),
             type=inverse_type,
-            payload=dict(op.reversal_data),
+            payload=payload,
             reversal_data={
+                INVERSE_PAYLOAD_KEY: dict(op.payload),
                 "compensates_operation_id": op.operation_id,
                 "original_type": op.type.value,
                 "original_payload": op.payload,
             },
         )
 
-    def _carry_snapshot_precondition(self, plan: CurationPlan) -> tuple[Precondition, ...]:
+    def _rebased_snapshot_preconditions(
+        self, plan: CurationPlan, snapshot: str | None
+    ) -> tuple[Precondition, ...]:
+        """The source plan's snapshot guards, re-expected against `snapshot`.
+
+        Empty when `snapshot` is None (see `compensate`) or when the source
+        plan carried no snapshot guard — there is then no subject to guard,
+        and inventing one would be a guess.
+        """
+        if snapshot is None:
+            return ()
         return tuple(
-            p for p in plan.preconditions if p.kind == SNAPSHOT_PRECONDITION_KIND
+            Precondition(kind=p.kind, subject=p.subject, expected=snapshot)
+            for p in plan.preconditions
+            if p.kind == SNAPSHOT_PRECONDITION_KIND
         )
+
+
+__all__ = [
+    "INVERSE_OPERATION",
+    "INVERSE_PAYLOAD_KEY",
+    "CompensationResult",
+    "Compensator",
+]
