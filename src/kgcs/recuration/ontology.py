@@ -265,6 +265,10 @@ class OntologyLifecycle:
                 "graph_id": term.graph_id,
                 "state": term.state.value,
             },
+            # No INVERSE_PAYLOAD_KEY, deliberately: PROMOTE_ONTOLOGY_TERM is
+            # declared non-compensable (there is no "demote" operation), so the
+            # compensator never builds an inverse payload from this. What is
+            # here is lineage and provenance (§9 law 8).
             reversal_data={"term_id": term.term_id, **provenance},
         )
         return CurationPlan(

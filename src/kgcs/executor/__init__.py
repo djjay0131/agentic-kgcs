@@ -10,6 +10,7 @@ generation for rollback.
 
 from kgcs.executor.compensate import (
     INVERSE_OPERATION,
+    INVERSE_PAYLOAD_KEY,
     CompensationResult,
     Compensator,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "DEFAULT_EXECUTED_BY",
     "DEFAULT_SUPPORTED_OPERATIONS",
     "INVERSE_OPERATION",
+    "INVERSE_PAYLOAD_KEY",
     "CompensationResult",
     "Compensator",
     "EpochPublisher",

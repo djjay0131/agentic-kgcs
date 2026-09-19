@@ -1,5 +1,102 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-19 (post-v1 defect fix): **ADR-0018 — a compensating plan
+asserts post-application state, and carries a payload a store can apply.**
+Branch `fix/compensation-precondition-and-inverse-payload`, opened after the
+`agentic-kg` adopter hit three defects building a Neo4j `GraphMutationStore`.
+All three reproduce against KGCS's own reference store, and they are **one**
+defect with three faces.
+
+The gate: `Compensator` carried the *source* plan's snapshot precondition into
+the compensating plan. The executor enforces that guard itself against the
+graph's current epoch whenever the store is also a `GraphReader` — the
+reference `MemoryGraphStore` is — so the original plan's own commit invalidated
+the guard its own rollback inherited. Measured on `v1.0.0`: source plan guard
+`('snapshot_version','g1','0')`, forward `COMMITTED` at epoch 1, compensating
+plan guard **still `'0'`**, compensation `STALE`, store untouched.
+**Compensation has never been executable against a readable store.**
+
+Behind the gate, two malformed inverses nobody could reach. `RETRACT`→`ATTACH`
+produced a payload with 17 `Assertion` validation errors (10 required fields
+missing — `predicate` among them — and 7 `extra_forbidden` from the provenance
+block that shared `reversal_data`). `ATTACH`→`RETRACT` dropped `new_status` and
+`superseded_at`, at both producers. Root cause of both: `reversal_data` was
+simultaneously the inverse payload and the forward op's lineage, and
+`_invert` used the whole dict as the payload.
+
+Fix. `compensate(plan, *, against_snapshot)` — **required and non-optional** —
+rebases the source plan's snapshot guards onto the epoch the original plan
+committed at (`ExecutionRecord.new_epoch`). Every compensating plan carries
+**exactly one** snapshot guard, synthesized on the first candidate id when
+there is nothing to rebase; a non-epoch value raises `ValueError`. There is no
+argument that yields an unguarded plan. `INVERSE_PAYLOAD_KEY`
+separates the inverse payload from the lineage in `reversal_data`, with a
+fallback to the whole dict for un-migrated producers. Shared
+`retract_inverse_payload` gives both producers a complete `RETRACT` payload
+(`new_status=SUPERSEDED`, `superseded_at=recorded_at`; no `superseded_by` —
+a rollback has nothing superseding it); the supersession `RETRACT`'s inverse is
+the full pre-retraction assertion dump.
+
+**Two artifacts had pinned the defect as correct.**
+`test_executed_attach_is_rolled_back_by_its_compensation` asserted the
+compensation was `STALE` and then hand-rebuilt the precondition to proceed; and
+**ADR candidate 0016** described defect A exactly and, at v1 completion, *accepted
+it as a durable KGCS-local decision* — graded an ergonomics gap when it was a
+non-functional path. Candidate 0016 is now `Superseded by ADR-0018`. The E2E
+harness's `superseded_at` fallback (a fixed instant when none was carried) was
+the third piece of cover and is removed.
+
+A supersession now rolls back end to end for the first time: 2015 superseded by
+2014 at epoch 2, rolled back at epoch 3 to 2015 live / 2014 `SUPERSEDED`,
+nothing deleted (§9 law 10). Both directions tested — commits when the graph is
+where it should be, `STALE` when a concurrent writer got there first.
+
+Review round 2 found a defect **this PR created by unblocking the path**:
+compensating a compensation committed and left 2015 *and* 2014 both `ACTIVE` on
+one subject and predicate, because a compensating `ATTACH` re-attaches an
+existing `assertion_id` and `MemoryGraphStore.put_assertion` appends. ADR-0018
+now states that a compensating `ATTACH` is an **upsert by `assertion_id`** (an
+adapter obligation — a uniqueness constraint in a real store), the E2E store
+implements it, and the test runs the second compensation and asserts one row
+per id landing back on the post-supersession state. Also closed rather than
+deferred: the `against_snapshot=None` fail-open path and the undocumented
+"real epoch, still no guard" case. `snapshot_guarded` is gone — it had zero
+production consumers, since the executor only ever sees a `CurationPlan`.
+
+Verification round 3 confirmed the involution to depth 3 (`e2→e3→e4→e5`, two
+rows and no duplicate id at every depth, LIVE alternating 2014↔2015) and
+sharpened one point in our favour: because a conforming adapter's upsert makes
+the inverses **idempotent**, the graph-global guard is a **liveness** problem,
+not a safety one — over-broad guards stick valid rollbacks but cannot corrupt
+state, so per-subject guards (candidate 0003) are an availability improvement
+to schedule rather than a correctness hole. Recorded in the ADR, along with the
+one gap left open: Decision 5's upsert is a *stated* obligation whose only
+conforming implementation lives in `tests/`, while `PlanExecutor` already holds
+a `GraphReader` and knows `is_compensation=True` — a post-apply duplicate-id
+check there needs no new `ExecutionOutcome` and would make it verified rather
+than asserted. Named in the ADR so it is not rediscovered. Also closed: `int()`
+**coerced** rather than rejected (`1.5→'1'`, `-0.4→'0'`, the latter slipping
+past the non-negative check into a wrong-but-*meetable* guard, which is worse
+than an unmeetable one); floats are now refused outright.
+
+490 → 519 passing (+29 net). **19** pre-existing `compensate()` call sites
+gained the keyword — all in `tests/`, **zero in `src/`**, which is itself the
+tell: nothing in production ever called the rollback path. 3 tests changed to
+read the new `reversal_data` shape; 1 rewritten because it encoded the defect.
+ruff clean, mypy strict clean (49 files), governance 4/4.
+
+Release: `pyproject.toml` is deliberately untouched — this repo bumps in a
+dedicated `chore(release)` PR (issue #31, convention set by #29). This change
+is **source-breaking**: `Compensator.compensate(plan)` no longer compiles, and
+the `reversal_data` shape moved payload material under `inverse_payload`.
+Strict semver on a tagged `1.0.0` makes that **2.0.0**, shipped **standalone**
+rather than folded into the `1.1.0` queued on #31 — folding it would leave the
+version number silent about the one break a reader most needs warning of. The "nothing broke, compensation never worked" counter-argument
+covers only the signature: `reversal_data` is a *serialisation* shape, and
+reading it always worked, so a flat reader breaks **silently** at rollback time.
+An earlier revision of ADR-0018 graded this *minor*, contradicting the PR body —
+a wrongly-graded ADR inside the fix for a wrongly-graded ADR; corrected.
+
 Update 2026-09-18 (post-v1 defect fix, rev 2 after review): **ADR-0017 —
 identifier strength is entity-type relative.** Branch
 `fix/container-identifier-strength` (PR #30), opened against tagged `v1.0.0`

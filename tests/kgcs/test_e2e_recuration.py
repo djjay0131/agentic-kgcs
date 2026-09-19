@@ -254,7 +254,7 @@ class TestFlagshipSupersession:
         assert [a.object_value for a in as_of_a] == [shape.value_a]
 
         # The re-curation is fully reversible and every op traces to the trigger.
-        assert Compensator().compensate(result.plan).fully_compensable is True
+        assert Compensator().compensate(result.plan, against_snapshot=1).fully_compensable is True
         for op in result.plan.operations:
             assert op.reversal_data["trigger_id"] == trigger.trigger_id
             assert shape.ev_b in op.reversal_data["evidence_ids"]  # type: ignore[operator]

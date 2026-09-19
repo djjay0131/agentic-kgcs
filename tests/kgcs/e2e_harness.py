@@ -109,16 +109,25 @@ class E2EGraphStore(MemoryGraphStore):
                     assertion = Assertion.model_validate(
                         {**operation.payload, "curation_epoch": new_epoch}
                     )
-                    self.put_assertion(assertion)
+                    self._upsert_assertion(assertion)
                     touched.append(assertion.subject_identity)
                 elif operation.type is CurationOperationType.RETRACT_ASSERTION:
                     assertion_id = str(operation.payload["assertion_id"])
-                    # A supersession plan pins `superseded_at`; a *compensating*
-                    # RETRACT (from an ATTACH's reversal_data) does not — rollback
-                    # is a soft-undo (status change, history preserved), so a
-                    # fixed instant stands in when none is carried.
-                    raw = operation.payload.get("superseded_at")
-                    superseded_at = datetime.fromisoformat(str(raw)) if raw is not None else T0
+                    # Every RETRACT payload — planned supersession or
+                    # compensating rollback — carries `new_status` and
+                    # `superseded_at` (ADR-0018). This store deliberately does
+                    # NOT substitute a default for a missing one: a reversal
+                    # that loses the fields the operation is defined by is a
+                    # lossy inverse, and papering over it here is what hid the
+                    # defect. A payload missing them is a producer bug and
+                    # raises, which the executor reports rather than crashing.
+                    new_status = CurationStatus(operation.payload["new_status"])
+                    if new_status is not CurationStatus.SUPERSEDED:
+                        raise NotImplementedError(
+                            f"E2EGraphStore applies RETRACT_ASSERTION only as a "
+                            f"SUPERSEDED status change, not {new_status.value}"
+                        )
+                    superseded_at = datetime.fromisoformat(str(operation.payload["superseded_at"]))
                     self.mark_superseded(assertion_id, superseded_at)
                     touched.append(str(operation.payload["subject_identity"]))
                 else:
@@ -133,6 +142,26 @@ class E2EGraphStore(MemoryGraphStore):
             self.rollback()
             raise
         return CommitResult(batch_id=batch.batch_id, committed=True, new_epoch=new_epoch)
+
+    def _upsert_assertion(self, assertion: Assertion) -> None:
+        """Attach by `assertion_id`, replacing in place — never appending a twin.
+
+        ADR-0018. `MemoryGraphStore.put_assertion` appends unconditionally,
+        which is fine while every `ATTACH` carries a fresh id. A *compensating*
+        `ATTACH` does not: restoring a retracted record re-attaches the SAME
+        `assertion_id`. With append semantics the store then holds two rows for
+        one id, and the next `mark_superseded` picks whichever it scans first —
+        measured, compensating a compensation left 2015 and 2014 both `ACTIVE`
+        on one subject and predicate. An `assertion_id` identifies a record;
+        attaching it twice is the same record. Real adapters carry the same
+        obligation (a uniqueness constraint on `assertion_id`).
+        """
+        subject_assertions = self._assertions.setdefault(assertion.subject_identity, [])
+        for index, existing in enumerate(subject_assertions):
+            if existing.assertion_id == assertion.assertion_id:
+                subject_assertions[index] = assertion
+                return
+        subject_assertions.append(assertion)
 
 
 # --- source shapes ----------------------------------------------------------

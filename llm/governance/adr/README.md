@@ -9,6 +9,7 @@ founding + contract decisions. Use `0000-template.md`.
 | ADR | Title | Status |
 |---|---|---|
 | [0017](0017-identifier-strength-is-entity-type-relative.md) | Identifier strength is entity-type relative; scoped identifiers | Proposed |
+| [0018](0018-compensating-plans-assert-post-application-state.md) | A compensating plan asserts post-application state, and carries a payload a store can apply | Proposed |
 
 Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`
 and ten of those carry accepted decisions in place; reusing a candidate number
@@ -44,6 +45,6 @@ upstream backlog (0005–0008):
 - [0013 — a re-curation plan's provenance is a trigger, not a candidate](candidates/0013-recuration-plan-provenance-source.md)
 - [0014 — the `ReviewQueue` contract can't express typed outcomes or a typed review case](candidates/0014-review-queue-surface-limits.md)
 - [0015 — the reference `MemoryGraphStore` applies only two operation types](candidates/0015-reference-store-limited-operation-coverage.md)
-- [0016 — an executed compensation needs re-stamping against the current snapshot](candidates/0016-compensation-needs-snapshot-restamp.md)
+- [0016 — an executed compensation needs re-stamping against the current snapshot](candidates/0016-compensation-needs-snapshot-restamp.md) — **superseded by [ADR-0018](0018-compensating-plans-assert-post-application-state.md)**: the behaviour it accepted as a durable decision was a defect (compensation could never apply against a readable store)
 
 (0001–0004 from Wave 0; 0005–0008 from Wave 2; 0009–0011 from Wave 3; 0012 from Wave 4; 0013 from Wave 5; 0014 from Wave 6; 0015–0016 from Wave 8.)

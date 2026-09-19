@@ -70,7 +70,9 @@ from kgcs.er.normalize import NormalizedEntity
 from kgcs.ids import DerivedIdFactory, IdFactory
 from kgcs.planner import (
     DEFAULT_POLICY_VERSION,
+    INVERSE_PAYLOAD_KEY,
     SNAPSHOT_PRECONDITION_KIND,
+    retract_inverse_payload,
 )
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 from kgcs.recuration.triggers import (
@@ -387,11 +389,12 @@ class ConceptEvolutionPlanner:
             },
             reversal_data=self._reversal(
                 trigger,
-                {
-                    "assertion_id": old_assertion.assertion_id,
-                    "subject_identity": old_assertion.subject_identity,
-                    "restore_status": old_assertion.status.value,
-                },
+                # The inverse of "mark this record SUPERSEDED" is "put the
+                # record back as it stood", so the inverse ATTACH's payload is
+                # the full pre-retraction assertion — status included (that is
+                # what `restore_status` was gesturing at before ADR-0018, in a
+                # payload that could not validate as an `Assertion` at all).
+                _json_payload(old_assertion),
             ),
         )
         return self._result(
@@ -465,10 +468,7 @@ class ConceptEvolutionPlanner:
             payload=_json_payload(assertion),
             reversal_data=self._reversal(
                 trigger,
-                {
-                    "assertion_id": assertion.assertion_id,
-                    "subject_identity": assertion.subject_identity,
-                },
+                retract_inverse_payload(assertion, assertion.subject_identity),
             ),
         )
 
@@ -519,16 +519,26 @@ class ConceptEvolutionPlanner:
         return self._ids.operation_id(f"recur:{trigger.trigger_id}:{op_type.value}:{target}")
 
     def _reversal(
-        self, trigger: CurationTrigger, fields: Mapping[str, object]
+        self, trigger: CurationTrigger, inverse_payload: Mapping[str, object]
     ) -> dict[str, object]:
-        """Merge reversal-identifying fields with the trace-linked provenance block."""
+        """The inverse operation's payload plus the trace-linked provenance block.
+
+        The two are deliberately *not* merged flat (ADR-0018). `reversal_data`
+        is read by two different consumers: `kgcs.executor.compensate` takes
+        `INVERSE_PAYLOAD_KEY` as the reversing operation's payload, and an
+        auditor takes the provenance block. Flattening them put `trigger_id`,
+        `evidence_ids` and the version stamps into every inverse *payload* —
+        harmless-looking for a merge, fatal for a `RETRACT`→`ATTACH` inverse,
+        whose payload must validate as an `Assertion` (`extra="forbid"`, and
+        `trace_id` means two different things on the two sides).
+        """
         provenance = trigger_provenance(
             trigger,
             matcher_version=self._matcher_version,
             adviser_version=self._adviser_version,
             policy_version=self._policy_version,
         )
-        return {**dict(fields), **provenance}
+        return {INVERSE_PAYLOAD_KEY: dict(inverse_payload), **provenance}
 
 
 def _assertion_evidence(assertion: Assertion) -> tuple[str, ...]:
