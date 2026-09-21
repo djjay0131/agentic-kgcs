@@ -67,11 +67,21 @@ from kgcs.planner import SNAPSHOT_PRECONDITION_KIND
 
 DEFAULT_EXECUTED_BY = "kgcs.executor/auto"
 
-#: The operation types the Plan-1 reference `MemoryGraphStore` actually
-#: applies. Widened by later waves / richer adapters via the
-#: ``supported_operations`` argument, never by editing the frozen contract.
+#: The operation types the reference `MemoryGraphStore` actually applies.
+#: Widened by later waves / richer adapters via the ``supported_operations``
+#: argument, never by editing the frozen contract.
+#:
+#: `REVOKE_IDENTITY` joined the set with KGIS ADR-0025: the store implements it,
+#: so a `CREATE_IDENTITY` rollback now reaches the store instead of being
+#: refused `UNSUPPORTED_OPERATION` before it gets there. This constant is what
+#: decides that — leaving it stale would have kept the compensation path dead
+#: while every other piece of it worked.
 DEFAULT_SUPPORTED_OPERATIONS: frozenset[CurationOperationType] = frozenset(
-    {CurationOperationType.CREATE_IDENTITY, CurationOperationType.ATTACH_ASSERTION}
+    {
+        CurationOperationType.CREATE_IDENTITY,
+        CurationOperationType.ATTACH_ASSERTION,
+        CurationOperationType.REVOKE_IDENTITY,
+    }
 )
 
 

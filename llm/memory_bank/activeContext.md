@@ -1,5 +1,62 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (Defect 2 — the CREATE_IDENTITY inverse): **rollback of an
+identity-creation run is now demonstrated, not asserted (ADR-0020).** Branch
+`fix/complete-create-identity-inverse`, the KGCS half of KGIS ADR-0025.
+**agentic-kgis PR #46 is MERGED** (`agentic-kgis` main `de48639`), so the gate
+is lifted and CI is green. Re-verified against the merged contract rather than
+the PR head: 535 pytest, 0 skipped, ruff, mypy strict, governance 4/4, and the
+full 10-mutation battery reproduces kill-for-kill — nothing silently stopped
+running when the imports started resolving.
+
+Three merged-#46 points verified rather than assumed: (1) the inverse payload
+carries the **pre-revoke ACTIVE** entity dump (KGCS gets this right generically
+by never reading the graph back for reversal data); (2) the revoke round trip
+restores the identity `ACTIVE` but **not** its creation epoch — a stated bound,
+KGIS issue #51's `RESTORE_IDENTITY`, and the in-place fix is ruled out by KGIS
+mutant B1′; (3) `INVERSE_OPERATION_TYPES` is a **vocabulary** statement, not an
+executability one — 7 types have a named inverse, the reference store executes
+3, so `fully_compensable=True` does not mean "rollback works today". All three
+are pinned by tests. Measured against the #46 head: KGCS's
+527-test suite had **exactly one** failure — `INVERSE_OPERATION` missing
+`REVOKE_IDENTITY` — and nothing else in the contract change touched KGCS.
+
+Done: `INVERSE_OPERATION` is now *derived* from `kg_contracts.INVERSE_OPERATION_TYPES`
+rather than hand-transcribed (the drift that let `CREATE_IDENTITY` sit as
+non-compensable for a release is now unrepresentable); both producers of a
+`CREATE_IDENTITY` — planner and `recuration.evolution.plan_promotion` — carry a
+revoke payload built by one shared `revoke_inverse_payload`, per ADR-0018's
+two-producer lesson; `REVOKE_IDENTITY` joined `DEFAULT_SUPPORTED_OPERATIONS`;
+and the rollback is executed end to end — 8 identities, forward COMMITTED at
+epoch 1, rollback COMMITTED at epoch 2, default read 0 (was 8),
+`include_revoked=True` 8 all REVOKED all at `curation_epoch=1`, epoch-scoped
+read at 1 still 8, `include_superseded=True` 0.
+
+**Read-semantics audit (REVOKED now hidden by default):** KGCS production code
+makes exactly **one** canonical read — `GraphReader.current_epoch()` — so
+nothing here breaks. No `get_entity`/`find_entities`/`assertions_for`/
+`neighborhood` call exists in `src/` on this branch. **That audit expires the
+moment KGCS reads entities back**, and ADR-0019's sibling branch adds the first
+such read (`assertions_for` in `_assertion_present`); whichever merges second
+must decide whether it also wants `include_revoked=True`. It should.
+
+Still open: **assertion** rollback is compensated correctly and in the right
+order but cannot execute against the reference store, which implements no
+`RETRACT_ASSERTION` (ADR candidate 0015, upstream). Identity rollback is
+demonstrated; assertion rollback is still only asserted.
+
+Update 2026-09-21 (upstream finding, resolved upstream — no KGCS change):
+an in-flight `kg_contracts` validator forbidding `create_new_identity=True`
+together with `resolved_identity` broke **61** KGCS tests. Reported rather than
+worked around; the KGIS agent withdrew the validator as unsound (it could not
+distinguish a freshly minted id from a pre-existing one, so it rejected the
+legitimate case and missed the illegitimate one). Re-measured after the
+withdrawal: 61 failures → 1. **`kgcs.policy.ResolutionPolicy` is correct as it
+stands and must not be changed.** The open semantic question — what
+`resolved_identity` means when `create_new_identity=True` — is agentic-kgis
+issue #47; KGCS implements reading B ("the identity this candidate ends up
+attached to"), which the planner requires for the `CREATE_IDENTITY` payload.
+
 Update 2026-09-19 (post-v1 defect fix): **ADR-0018 — a compensating plan
 asserts post-application state, and carries a payload a store can apply.**
 Branch `fix/compensation-precondition-and-inverse-payload`, opened after the

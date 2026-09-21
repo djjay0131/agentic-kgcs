@@ -70,6 +70,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from kg_contracts.curation import (
+    INVERSE_OPERATION_TYPES,
     CurationOperation,
     CurationOperationType,
     CurationPlan,
@@ -85,16 +86,22 @@ from kgcs.planner import (
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 
 #: The reversing operation type for each `CurationOperationType`, or `None`
-#: when the v1 vocabulary has no inverse. Kept declarative so the compensable
-#: set is auditable at a glance and widening it is a data change.
+#: when the vocabulary has no inverse.
+#:
+#: **Derived from `kg_contracts.INVERSE_OPERATION_TYPES`, never hand-maintained**
+#: (KGIS ADR-0025). The contract publishes the vocabulary half of the pair so
+#: the two repos cannot disagree about which type reverses which; a second
+#: table here, transcribed by hand, is precisely how they would drift — and
+#: did: `CREATE_IDENTITY` sat in this file as non-compensable for a full
+#: release after the contract gained `REVOKE_IDENTITY`.
+#:
+#: The projection is total over `CurationOperationType` while the contract map
+#: is deliberately partial: a type the contract omits is *declared*
+#: non-compensable here rather than silently absent, which is what lets a
+#: caller distinguish "cannot be reversed" from "nobody considered it".
+#: `PROMOTE_ONTOLOGY_TERM` is the only such type today (KGIS issue #45).
 INVERSE_OPERATION: dict[CurationOperationType, CurationOperationType | None] = {
-    CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
-    CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
-    CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
-    CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
-    CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
-    CurationOperationType.CREATE_IDENTITY: None,
-    CurationOperationType.PROMOTE_ONTOLOGY_TERM: None,
+    op_type: INVERSE_OPERATION_TYPES.get(op_type) for op_type in CurationOperationType
 }
 
 

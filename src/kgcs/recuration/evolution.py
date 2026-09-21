@@ -73,6 +73,7 @@ from kgcs.planner import (
     INVERSE_PAYLOAD_KEY,
     SNAPSHOT_PRECONDITION_KIND,
     retract_inverse_payload,
+    revoke_inverse_payload,
 )
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 from kgcs.recuration.triggers import (
@@ -165,10 +166,14 @@ class ConceptEvolutionPlanner:
         """A candidate/mention becomes a canonical concept (`CREATE_IDENTITY`).
 
         The identity id is either supplied (already minted by resolution) or
-        minted here deterministically from the candidate. `CREATE_IDENTITY` has
-        no inverse in the v1 vocabulary, so a promotion plan is *explicitly*
-        non-compensable for that step (§9 law 8) — the caller must not
-        auto-execute a rollback that cannot un-create the identity.
+        minted here deterministically from the candidate.
+
+        A promotion is **compensable** since KGIS ADR-0025 gave
+        `CREATE_IDENTITY` an inverse (`REVOKE_IDENTITY`); it was declared
+        non-compensable while the vocabulary had none. The inverse payload is
+        built by the same `revoke_inverse_payload` the planner uses — ADR-0018's
+        lesson was that two producers of one operation type drift apart unless
+        they share the constructor, and this is the second producer.
         """
         minted = identity_id or self._ids.identity_id(
             candidate.graph_id, f"promote:{candidate.candidate_id}"
@@ -182,11 +187,14 @@ class ConceptEvolutionPlanner:
             created_at=candidate.created_at,
             curation_epoch=0,
         )
+        operation_id = self._op_id(trigger, CurationOperationType.CREATE_IDENTITY, minted)
         operation = CurationOperation(
-            operation_id=self._op_id(trigger, CurationOperationType.CREATE_IDENTITY, minted),
+            operation_id=operation_id,
             type=CurationOperationType.CREATE_IDENTITY,
             payload=_json_payload(entity),
-            reversal_data=self._reversal(trigger, {"identity_id": minted}),
+            reversal_data=self._reversal(
+                trigger, revoke_inverse_payload(minted, operation_id)
+            ),
         )
         return self._result(
             EvolutionKind.PROMOTION,

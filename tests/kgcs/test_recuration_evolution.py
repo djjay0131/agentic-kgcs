@@ -60,17 +60,29 @@ def _all_op_types(plan: CurationPlan) -> set[CurationOperationType]:
 # --- promotion --------------------------------------------------------------
 
 
-def test_promotion_creates_identity_and_is_declared_non_compensable() -> None:
+def test_promotion_creates_identity_and_is_compensable_by_a_revoke() -> None:
     candidate = make_entity_candidate()
     result = _planner().plan_promotion(candidate=candidate, trigger=_trigger())
     assert result.kind is EvolutionKind.PROMOTION
     assert result.plan is not None
     assert _all_op_types(result.plan) == {CurationOperationType.CREATE_IDENTITY}
-    # CREATE_IDENTITY has no inverse — explicitly declared non-compensable (law 8).
-    assert INVERSE_OPERATION[CurationOperationType.CREATE_IDENTITY] is None
+    minted = str(result.plan.operations[0].payload["identity_id"])
+    # KGIS ADR-0025 gave CREATE_IDENTITY an inverse; a promotion was declared
+    # non-compensable only while the vocabulary had none.
+    assert (
+        INVERSE_OPERATION[CurationOperationType.CREATE_IDENTITY]
+        is CurationOperationType.REVOKE_IDENTITY
+    )
     comp = Compensator().compensate(result.plan, against_snapshot=1)
-    assert comp.fully_compensable is False
-    assert len(comp.non_compensable) == 1
+    assert comp.fully_compensable is True
+    assert comp.non_compensable == ()
+    assert comp.plan is not None
+    (op,) = comp.plan.operations
+    assert op.type is CurationOperationType.REVOKE_IDENTITY
+    # The second producer's inverse payload must be the same shape as the
+    # planner's — no trigger provenance leaking into the operation payload.
+    assert op.payload["identity_id"] == minted
+    assert set(op.payload) == {"identity_id", "reason"}
 
 
 # --- merge ------------------------------------------------------------------
