@@ -1,5 +1,104 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (#38 review — R22): **release-critical criterion MET** —
+identity rollback is genuinely demonstrated to the standard the downstream
+brief demands. Three narrow fixes landed on top.
+
+- **The epoch-scoped limb of the acceptance criterion asserts identities AND a
+  count — both, because each is blind to what the other catches.** It began as
+  a count alone (right number, could be the wrong eight records); replacing it
+  with an identity set alone then lost duplicate detection, since a set cannot
+  see duplicates. Mutants prove each direction: mangled identities → count
+  passes, set fails; every record returned twice → set passes, count fails
+  (`16 == 8`). A boundary assertion that the epoch *before* creation returns
+  nothing is what makes the epoch argument load-bearing; a far-future epoch
+  cannot catch it, because an epoch read is legitimately **as-of**.
+- **A second silent fallback in `_invert`, undisclosed until review**: a
+  *malformed* `INVERSE_PAYLOAD_KEY` leaked lineage AND the sentinel key itself.
+  Decision taken (owner-approved): the absent key now raises by default with an
+  explicit `allow_legacy_reversal_data=True` opt-in; the malformed key raises
+  **unconditionally**. The fallback's real precondition was never "the producer
+  predates the key" but "`reversal_data` holds nothing but the payload" — P6
+  proved those differ.
+- Docstrings in `compensate.py` and `evolution.py` still declared
+  `CREATE_IDENTITY` non-compensable, in files this PR edits. Corrected.
+
+Filed, not fixed: **#41** — `fully_compensable` means "a named inverse exists",
+not "rollback will work"; proposes a rename plus
+`executable_against(supported_operations)` so "consult both" is an API.
+
+**PROCESS — hard-won, three incidents:** several agents share
+`/mnt/c/code/agentic-kgcs`, and HEAD moving under a reader has invalidated
+measurements repeatedly; one reviewer's venv was also found pointing at another
+agent's editable `kg_contracts` clone. Rules that actually hold:
+1. Measure only in a **detached** `git worktree` (`--detach`), never in the
+   shared checkout, so no other agent's branch is disturbed.
+2. Install `kg_contracts` from a **private clone you own**, never a path
+   another agent writes to.
+3. Keep that private clone **editable**. Non-editable was tried here and
+   **silently defeated mutation testing**: uv installs a built wheel, so edits
+   to the dependency never reach the venv and a mutant reports as surviving
+   when it was never applied. Isolation comes from the path being private, not
+   from being non-editable. Always sanity-check that a mutation is visible to
+   the venv before trusting a "survived" result.
+
+Update 2026-09-21 (Defect 2 — the CREATE_IDENTITY inverse): **rollback of an
+identity-creation run is now demonstrated, not asserted (ADR-0020).** Branch
+`fix/complete-create-identity-inverse`, the KGCS half of KGIS ADR-0025.
+**agentic-kgis PR #46 is MERGED** (`agentic-kgis` main `de48639`), so the gate
+is lifted and CI is green. Re-verified against the merged contract rather than
+the PR head: 535 pytest, 0 skipped, ruff, mypy strict, governance 4/4, and the
+full 10-mutation battery reproduces kill-for-kill — nothing silently stopped
+running when the imports started resolving.
+
+Three merged-#46 points verified rather than assumed: (1) the inverse payload
+carries the **pre-revoke ACTIVE** entity dump (KGCS gets this right generically
+by never reading the graph back for reversal data); (2) the revoke round trip
+restores the identity `ACTIVE` but **not** its creation epoch — a stated bound,
+KGIS issue #51's `RESTORE_IDENTITY`, and the in-place fix is ruled out by KGIS
+mutant B1′; (3) `INVERSE_OPERATION_TYPES` is a **vocabulary** statement, not an
+executability one — 7 types have a named inverse, the reference store executes
+3, so `fully_compensable=True` does not mean "rollback works today". All three
+are pinned by tests. Measured against the #46 head: KGCS's
+527-test suite had **exactly one** failure — `INVERSE_OPERATION` missing
+`REVOKE_IDENTITY` — and nothing else in the contract change touched KGCS.
+
+Done: `INVERSE_OPERATION` is now *derived* from `kg_contracts.INVERSE_OPERATION_TYPES`
+rather than hand-transcribed (the drift that let `CREATE_IDENTITY` sit as
+non-compensable for a release is now unrepresentable); both producers of a
+`CREATE_IDENTITY` — planner and `recuration.evolution.plan_promotion` — carry a
+revoke payload built by one shared `revoke_inverse_payload`, per ADR-0018's
+two-producer lesson; `REVOKE_IDENTITY` joined `DEFAULT_SUPPORTED_OPERATIONS`;
+and the rollback is executed end to end — 8 identities, forward COMMITTED at
+epoch 1, rollback COMMITTED at epoch 2, default read 0 (was 8),
+`include_revoked=True` 8 all REVOKED all at `curation_epoch=1`, epoch-scoped
+read at 1 still 8, `include_superseded=True` 0.
+
+**Read-semantics audit (REVOKED now hidden by default):** KGCS production code
+makes exactly **one** canonical read — `GraphReader.current_epoch()` — so
+nothing here breaks. No `get_entity`/`find_entities`/`assertions_for`/
+`neighborhood` call exists in `src/` on this branch. **That audit expires the
+moment KGCS reads entities back**, and ADR-0019's sibling branch adds the first
+such read (`assertions_for` in `_assertion_present`); whichever merges second
+must decide whether it also wants `include_revoked=True`. It should.
+
+Still open: **assertion** rollback is compensated correctly and in the right
+order but cannot execute against the reference store, which implements no
+`RETRACT_ASSERTION` (ADR candidate 0015, upstream). Identity rollback is
+demonstrated; assertion rollback is still only asserted.
+
+Update 2026-09-21 (upstream finding, resolved upstream — no KGCS change):
+an in-flight `kg_contracts` validator forbidding `create_new_identity=True`
+together with `resolved_identity` broke **61** KGCS tests. Reported rather than
+worked around; the KGIS agent withdrew the validator as unsound (it could not
+distinguish a freshly minted id from a pre-existing one, so it rejected the
+legitimate case and missed the illegitimate one). Re-measured after the
+withdrawal: 61 failures → 1. **`kgcs.policy.ResolutionPolicy` is correct as it
+stands and must not be changed.** The open semantic question — what
+`resolved_identity` means when `create_new_identity=True` — is agentic-kgis
+issue #47; KGCS implements reading B ("the identity this candidate ends up
+attached to"), which the planner requires for the `CREATE_IDENTITY` payload.
+
 Update 2026-09-19 (post-v1 defect fix): **ADR-0018 — a compensating plan
 asserts post-application state, and carries a payload a store can apply.**
 Branch `fix/compensation-precondition-and-inverse-payload`, opened after the

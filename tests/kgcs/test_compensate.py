@@ -18,11 +18,13 @@ import pytest
 from kg_contracts.assertions import Assertion, CurationStatus
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.curation import (
+    INVERSE_OPERATION_TYPES,
     CurationOperation,
     CurationOperationType,
     CurationPlan,
     Precondition,
 )
+from kg_contracts.stores import GraphReadOptions
 from kg_contracts.testing.factories import (
     make_assertion,
     make_attribute_candidate,
@@ -33,6 +35,7 @@ from kg_contracts.testing.memory import MemoryGraphStore
 
 from helpers import GRAPH_ID
 from kgcs import (
+    DEFAULT_SUPPORTED_OPERATIONS,
     INVERSE_PAYLOAD_KEY,
     Compensator,
     CurationEngine,
@@ -59,7 +62,18 @@ def engine(clock: FixedClock) -> CurationEngine:
     return CurationEngine.create(graph_id=GRAPH_ID, clock=clock)
 
 
-def _handbuilt(op_type: CurationOperationType) -> CurationPlan:
+def _handbuilt(
+    op_type: CurationOperationType, *, reversal_data: dict[str, object] | None = None
+) -> CurationPlan:
+    """A one-operation plan. Default `reversal_data` is the MODERN shape.
+
+    It carries the inverse payload under `INVERSE_PAYLOAD_KEY` alongside a
+    lineage key, which is what every in-repo producer emits and what the
+    compensator requires by default. Tests that want the pre-ADR-0018 shape
+    (payload at the top level, no sentinel) pass it explicitly, so "this test
+    exercises legacy data" is visible at the call site rather than baked into
+    the helper.
+    """
     return CurationPlan(
         plan_id=f"pl_{op_type.value.lower()}",
         candidate_ids=("cand_1",),
@@ -69,13 +83,22 @@ def _handbuilt(op_type: CurationOperationType) -> CurationPlan:
                 operation_id=f"op_{op_type.value.lower()}",
                 type=op_type,
                 payload={"forward": "payload"},
-                reversal_data={"undo": "data"},
+                reversal_data=(
+                    {INVERSE_PAYLOAD_KEY: {"undo": "data"}, "lineage": "not-payload"}
+                    if reversal_data is None
+                    else reversal_data
+                ),
             ),
         ),
         preconditions=(),
         evidence_ids=(),
         policy_version="1",
     )
+
+
+#: The pre-ADR-0018 shape: the inverse payload sitting at the top level of
+#: `reversal_data` with no sentinel key.
+LEGACY_REVERSAL_DATA: dict[str, object] = {"undo": "data"}
 
 
 class TestInverseMap:
@@ -97,19 +120,30 @@ class TestInverseMap:
         assert "assertion_id" in op.payload
         assert op.reversal_data["original_type"] == "ATTACH_ASSERTION"
 
-    def test_create_identity_is_non_compensable(
+    def test_create_identity_inverts_to_a_well_formed_revoke(
         self, engine: CurationEngine, auto_scores: CandidateScores
     ) -> None:
+        # KGIS ADR-0025 gave CREATE_IDENTITY an inverse. Before it, this same
+        # plan compensated to nothing and was reported non-compensable.
         plan = engine.curate(
             [make_entity_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
         ).plan
         assert plan is not None
+        identity_id = str(plan.operations[0].payload["identity_id"])
         result = Compensator().compensate(plan, against_snapshot=1)
 
-        assert not result.fully_compensable
-        assert result.plan is None  # the only op had no inverse
-        assert len(result.non_compensable) == 1
-        assert result.non_compensable[0].type is CurationOperationType.CREATE_IDENTITY
+        assert result.fully_compensable
+        assert result.non_compensable == ()
+        assert result.plan is not None
+        (op,) = result.plan.operations
+        assert op.type is CurationOperationType.REVOKE_IDENTITY
+        # An identity reference, never an entity dump (ADR-0025): a stale copy
+        # carried in the plan must not be able to overwrite the live entity.
+        assert op.payload["identity_id"] == identity_id
+        assert set(op.payload) == {"identity_id", "reason"}
+        # ...and the pre-revoke entity travels in reversal_data, which is what
+        # makes the revoke itself compensable by a CREATE_IDENTITY.
+        assert op.reversal_data[INVERSE_PAYLOAD_KEY] == dict(plan.operations[0].payload)
 
     @pytest.mark.parametrize(
         ("forward", "inverse"),
@@ -128,10 +162,60 @@ class TestInverseMap:
         assert result.plan is not None
         (op,) = result.plan.operations
         assert op.type is inverse
-        # An op whose producer predates INVERSE_PAYLOAD_KEY still compensates:
-        # the whole reversal_data is used as the inverse payload (back-compat).
+        # The inverse payload is the sentinel's value, and the lineage sharing
+        # reversal_data never reaches it.
         assert op.payload == {"undo": "data"}
+        assert "lineage" not in op.payload
         assert op.reversal_data["original_payload"] == {"forward": "payload"}
+
+    def test_a_missing_inverse_payload_key_raises_instead_of_falling_back(self) -> None:
+        # ADR-0018 made this a silent fallback to the whole reversal_data. Its
+        # intended precondition was "this producer predates the key"; its ACTUAL
+        # precondition is "reversal_data holds nothing but the payload", and
+        # those differ — mutation showed a CREATE_IDENTITY whose key was removed
+        # still rolling back happily with `candidate_id` inside the operation
+        # payload. Strict is now the default.
+        legacy = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION, reversal_data=LEGACY_REVERSAL_DATA
+        )
+        with pytest.raises(ValueError, match="carries no 'inverse_payload'"):
+            Compensator().compensate(legacy, against_snapshot=1)
+
+    def test_legacy_reversal_data_is_usable_only_by_explicit_opt_in(self) -> None:
+        # The escape hatch still exists for a caller that knows its
+        # reversal_data holds nothing but the payload — it is just no longer
+        # the default, and saying so is now a decision at the call site.
+        legacy = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION, reversal_data=LEGACY_REVERSAL_DATA
+        )
+        result = Compensator(allow_legacy_reversal_data=True).compensate(
+            legacy, against_snapshot=1
+        )
+        assert result.plan is not None
+        (op,) = result.plan.operations
+        assert op.payload == dict(LEGACY_REVERSAL_DATA)
+
+    @pytest.mark.parametrize("malformed", ["a string", 42, ["a", "list"], None])
+    def test_a_malformed_inverse_payload_key_always_raises(
+        self, malformed: object
+    ) -> None:
+        # The second fallback, undisclosed until review and worse than the
+        # first: a key PRESENT but not a mapping fell through the same
+        # isinstance branch, so the payload became the whole reversal_data —
+        # leaking lineage AND the sentinel key `inverse_payload` itself, a
+        # shape no consumer expects. Never back-compat, always a producer bug.
+        plan = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION,
+            reversal_data={INVERSE_PAYLOAD_KEY: malformed, "lineage": "not-payload"},
+        )
+        for compensator in (
+            Compensator(),
+            # ...and the opt-in does NOT excuse it. A malformed key is a bug in
+            # every configuration.
+            Compensator(allow_legacy_reversal_data=True),
+        ):
+            with pytest.raises(ValueError, match="malformed 'inverse_payload'"):
+                compensator.compensate(plan, against_snapshot=1)
 
     def test_inverse_payload_key_wins_over_the_rest_of_reversal_data(self) -> None:
         # The lineage/provenance that shares reversal_data must never reach the
@@ -178,7 +262,9 @@ class TestInverseMap:
 
     @pytest.mark.parametrize(
         "non_inverse",
-        [CurationOperationType.CREATE_IDENTITY, CurationOperationType.PROMOTE_ONTOLOGY_TERM],
+        # PROMOTE_ONTOLOGY_TERM is the only type the contract omits from
+        # INVERSE_OPERATION_TYPES (KGIS issue #45).
+        [CurationOperationType.PROMOTE_ONTOLOGY_TERM],
     )
     def test_non_compensable_types(self, non_inverse: CurationOperationType) -> None:
         result = Compensator().compensate(_handbuilt(non_inverse), against_snapshot=1)
@@ -300,7 +386,7 @@ class TestSnapshotGuard:
                     operation_id="op_1",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_1"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_1"}},
                 ),
             ),
             preconditions=(
@@ -503,13 +589,13 @@ class TestOrderingAndMixing:
                     operation_id="op_first",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_first"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_first"}},
                 ),
                 CurationOperation(
                     operation_id="op_second",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_second"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_second"}},
                 ),
             ),
             preconditions=(),
@@ -521,9 +607,13 @@ class TestOrderingAndMixing:
         undone = [op.reversal_data["compensates_operation_id"] for op in result.plan.operations]
         assert undone == ["op_second", "op_first"]  # last applied, first undone
 
-    def test_mixed_plan_compensates_assertion_reports_create(
+    def test_a_create_then_attach_plan_undoes_the_attach_before_the_identity(
         self, engine: CurationEngine, auto_scores: CandidateScores
     ) -> None:
+        # The ordering rule that matters now that CREATE_IDENTITY is
+        # compensable: an ATTACH that followed a CREATE must be retracted
+        # BEFORE the identity it hangs on is revoked. Asserted as a sequence,
+        # because order is the observable — a set would pass either way.
         plan = engine.curate(
             [
                 make_entity_candidate(graph_id=GRAPH_ID, scores=auto_scores),
@@ -531,15 +621,18 @@ class TestOrderingAndMixing:
             ]
         ).plan
         assert plan is not None
+        assert [op.type for op in plan.operations] == [
+            CurationOperationType.CREATE_IDENTITY,
+            CurationOperationType.ATTACH_ASSERTION,
+        ]
         result = Compensator().compensate(plan, against_snapshot=1)
-        assert not result.fully_compensable
+
+        assert result.fully_compensable
         assert result.plan is not None
-        assert {op.type for op in result.plan.operations} == {
-            CurationOperationType.RETRACT_ASSERTION
-        }
-        assert {op.type for op in result.non_compensable} == {
-            CurationOperationType.CREATE_IDENTITY
-        }
+        assert [op.type for op in result.plan.operations] == [
+            CurationOperationType.RETRACT_ASSERTION,
+            CurationOperationType.REVOKE_IDENTITY,
+        ]
 
 
 class TestDeterminismAndExecution:
@@ -587,5 +680,283 @@ class TestDeterminismAndExecution:
         record = PlanExecutor(store, clock=clock).execute(compensation, is_compensation=True)
         assert record.outcome is ExecutionOutcome.UNSUPPORTED_OPERATION
         assert record.is_compensation
+        assert "RETRACT_ASSERTION" in record.unsupported_types
+        assert store.current_epoch() == 0
+
+
+class TestRollbackIsDemonstrated:
+    """KGIS ADR-0025 item 7: the rollback is *executed*, not asserted.
+
+    A document claiming compensation works is insufficient — that was exactly
+    the state ADR-0018 found (`Compensator` produced plans nothing had ever
+    applied). These tests run a real committed batch through a real compensator
+    into a real store and then *read the graph back*.
+    """
+
+    RUN_SIZE = 8
+
+    def _committed_run(
+        self, clock: FixedClock, scores: CandidateScores
+    ) -> tuple[MemoryGraphStore, PlanExecutor, CurationPlan, tuple[str, ...], int]:
+        """Commit `RUN_SIZE` CREATE_IDENTITY operations and return the handles."""
+        engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
+        candidates = [
+            make_entity_candidate(graph_id=GRAPH_ID, key=f"e{n}", scores=scores)
+            for n in range(self.RUN_SIZE)
+        ]
+        plan = engine.curate(candidates).plan
+        assert plan is not None
+        # Non-vacuity: a rollback demonstration over an empty run proves nothing.
+        assert [op.type for op in plan.operations] == [
+            CurationOperationType.CREATE_IDENTITY
+        ] * self.RUN_SIZE
+        identity_ids = tuple(str(op.payload["identity_id"]) for op in plan.operations)
+        assert len(set(identity_ids)) == self.RUN_SIZE
+
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+        record = executor.execute(plan)
+        assert record.outcome is ExecutionOutcome.COMMITTED
+        assert record.new_epoch is not None
+        return store, executor, plan, identity_ids, record.new_epoch
+
+    def test_revoke_identity_reverses_a_committed_create_identity_run(
+        self, clock: FixedClock, auto_scores: CandidateScores
+    ) -> None:
+        store, executor, plan, identity_ids, created_at_epoch = self._committed_run(
+            clock, auto_scores
+        )
+
+        # The graph really does hold them first — otherwise "returns none of
+        # them" afterwards would be true of an empty graph too.
+        assert [store.get_entity(i) is not None for i in identity_ids] == [True] * self.RUN_SIZE
+        creation_epochs = {
+            i: store.get_entity(i).curation_epoch  # type: ignore[union-attr]
+            for i in identity_ids
+        }
+        assert set(creation_epochs.values()) == {created_at_epoch}
+
+        result = Compensator().compensate(plan, against_snapshot=created_at_epoch)
+        assert result.fully_compensable
+        assert result.plan is not None
+        assert [op.type for op in result.plan.operations] == [
+            CurationOperationType.REVOKE_IDENTITY
+        ] * self.RUN_SIZE
+        # Payload shape, asserted here and not only in TestInverseMap. Found by
+        # mutation: dropping INVERSE_PAYLOAD_KEY from the planner left this
+        # demonstration passing, because `_invert`'s back-compat fallback then
+        # used the whole reversal_data and the resulting
+        # {"identity_id", "candidate_id"} still revoked successfully — with
+        # `candidate_id`, lineage, leaking into an operation payload. The
+        # rollback "worked" while carrying the defect ADR-0018 fixed for
+        # RETRACT_ASSERTION. A demonstration that cannot see that is too weak.
+        for op in result.plan.operations:
+            assert set(op.payload) == {"identity_id", "reason"}
+
+        rollback = executor.execute(result.plan, is_compensation=True)
+        assert rollback.outcome is ExecutionOutcome.COMMITTED, (
+            f"rollback did not execute: {rollback.outcome} "
+            f"{rollback.error} {rollback.unsupported_types}"
+        )
+        assert rollback.is_compensation
+
+        # 1. The canonical read stops returning them.
+        assert [store.get_entity(i) for i in identity_ids] == [None] * self.RUN_SIZE
+        assert store.find_entities(entity_type="TestEntity") == []
+
+        # 2. include_revoked=True returns all of them, REVOKED, at their
+        #    CREATION epoch — the revoke is a tombstone, not a deletion and not
+        #    a re-stamp. Asserted per identity, not as a count.
+        history = GraphReadOptions(include_revoked=True)
+        for identity_id in identity_ids:
+            entity = store.get_entity(identity_id, history)
+            assert entity is not None, f"{identity_id} was erased, not revoked"
+            assert entity.status is CurationStatus.REVOKED
+            assert entity.curation_epoch == creation_epochs[identity_id]
+        assert len(store.find_entities(entity_type="TestEntity", options=history)) == self.RUN_SIZE
+
+        # 3. ...including under an epoch-scoped read of the epoch that created
+        #    them, which is the read a revoke must not break.
+        #
+        #    Asserted by IDENTITY, not by count. An earlier version of this limb
+        #    compared `len(...) == RUN_SIZE`, which review showed to be
+        #    decorative: the epoch read is as-of (`record_epoch > epoch` hides),
+        #    so @1, @2 and @999 all return 8 and the assertion could not fail in
+        #    the direction it claimed — a "counting when identity matters"
+        #    defect sitting inside the test that proves the release-critical
+        #    property. It now pins WHICH records come back, and the boundary
+        #    below pins that the epoch option is honoured at all.
+        at_creation = GraphReadOptions(
+            curation_epoch=created_at_epoch, include_revoked=True
+        )
+        seen = store.find_entities(entity_type="TestEntity", options=at_creation)
+        assert {e.identity_id for e in seen} == set(identity_ids)
+        # ...AND the count, which the set comparison cannot see. A set is blind
+        # to duplicates, so dropping the count in favour of identities traded
+        # one blind spot for another: `compensate.py` names duplicate rows under
+        # one id as a MEASURED defect in this repo, so the shape is real here
+        # even though `MemoryGraphStore` keys entities by dict and cannot
+        # produce it. Both assertions, not either.
+        assert len(seen) == self.RUN_SIZE
+        assert all(e.status is CurationStatus.REVOKED for e in seen)
+        assert {e.curation_epoch for e in seen} == {created_at_epoch}
+
+        #    The boundary: one epoch BEFORE creation must return nothing. This
+        #    is what makes the epoch argument load-bearing — without it the
+        #    assertion above would pass against a read that ignored the option
+        #    entirely.
+        before_creation = GraphReadOptions(
+            curation_epoch=created_at_epoch - 1, include_revoked=True
+        )
+        assert store.find_entities(entity_type="TestEntity", options=before_creation) == []
+
+    def test_include_superseded_does_not_reveal_a_revoked_identity(
+        self, clock: FixedClock, auto_scores: CandidateScores
+    ) -> None:
+        # The two history switches are independent (ADR-0025). A consumer
+        # asking to see superseded records must not thereby be shown
+        # retractions it did not ask for.
+        store, executor, plan, identity_ids, epoch = self._committed_run(clock, auto_scores)
+        result = Compensator().compensate(plan, against_snapshot=epoch)
+        assert result.plan is not None
+        assert executor.execute(result.plan, is_compensation=True).committed
+
+        superseded_only = GraphReadOptions(include_superseded=True)
+        assert store.find_entities(entity_type="TestEntity", options=superseded_only) == []
+        assert store.get_entity(identity_ids[0], superseded_only) is None
+        # ...while the right switch does reveal it.
+        assert (
+            store.get_entity(identity_ids[0], GraphReadOptions(include_revoked=True))
+            is not None
+        )
+
+    def test_a_revoke_names_an_unknown_identity_and_does_not_commit(
+        self, clock: FixedClock
+    ) -> None:
+        # ADR-0025's fail-closed clause, exercised rather than trusted: a
+        # rollback aimed at an identity that is not there must not report
+        # success, and must leave the store untouched.
+        store = MemoryGraphStore()
+        plan = CurationPlan(
+            plan_id="pl_revoke_ghost",
+            candidate_ids=("cand_ghost",),
+            snapshot_version="0",
+            operations=(
+                CurationOperation(
+                    operation_id="op_revoke_ghost",
+                    type=CurationOperationType.REVOKE_IDENTITY,
+                    payload={"identity_id": "kg://g1/identity/NEVERCREATEDNEVERCREATE"},
+                ),
+            ),
+            preconditions=(),
+            evidence_ids=(),
+            policy_version="1",
+        )
+        record = PlanExecutor(store, clock=clock).execute(plan)
+
+        assert record.outcome is not ExecutionOutcome.COMMITTED
+        assert not record.committed
+        assert store.current_epoch() == 0
+
+    def test_the_revoke_carries_the_pre_revoke_active_entity_for_its_own_inverse(
+        self, clock: FixedClock, auto_scores: CandidateScores
+    ) -> None:
+        # KGIS ADR-0025 §6: `reversal_data` must hold the entity as it was
+        # BEFORE the revoke — i.e. ACTIVE. Compensating from a post-revoke copy
+        # would "restore" the identity still REVOKED, which restores nothing.
+        # `Compensator._invert` gets this right generically, by carrying the
+        # forward operation's own payload (written at plan time, status ACTIVE)
+        # rather than reading the graph back; this pins that it stays true.
+        store, executor, plan, identity_ids, epoch = self._committed_run(clock, auto_scores)
+        result = Compensator().compensate(plan, against_snapshot=epoch)
+        assert result.plan is not None
+
+        # Paired against `reversed(...)`: the compensation is LIFO, so the
+        # first revoke undoes the LAST create. Zipping them forward silently
+        # compares mismatched identities — which is how this assertion first
+        # failed, and is itself a check on the ordering.
+        for forward, revoke in zip(reversed(plan.operations), result.plan.operations):
+            carried = revoke.reversal_data[INVERSE_PAYLOAD_KEY]
+            assert carried["status"] == CurationStatus.ACTIVE.value
+            assert dict(carried) == dict(forward.payload)
+
+        # And it survives the revoke actually happening: the graph says REVOKED,
+        # the carried dump still says ACTIVE.
+        assert executor.execute(result.plan, is_compensation=True).committed
+        live = store.get_entity(identity_ids[0], GraphReadOptions(include_revoked=True))
+        assert live is not None and live.status is CurationStatus.REVOKED
+        assert (
+            result.plan.operations[-1].reversal_data[INVERSE_PAYLOAD_KEY]["status"]
+            == CurationStatus.ACTIVE.value
+        )
+
+    def test_the_round_trip_restores_the_identity_but_not_its_creation_epoch(
+        self, clock: FixedClock, auto_scores: CandidateScores
+    ) -> None:
+        # The stated bound, pinned so it is a known limit rather than a
+        # surprise. REVOKE_IDENTITY inverts to CREATE_IDENTITY, which restores
+        # the entity ACTIVE — but `curation_epoch` is assigned by the executor
+        # at apply time, so the restored record carries the epoch of the batch
+        # that re-created it, not the one that originally created it.
+        # Deliberately NOT repaired in place: KGIS mutant B1' showed that making
+        # CREATE_IDENTITY honour an epoch in its payload corrupts the forward
+        # leg's own guarantee. The fix is a distinct RESTORE_IDENTITY operation
+        # — agentic-kgis issue #51.
+        store, executor, plan, identity_ids, created_epoch = self._committed_run(
+            clock, auto_scores
+        )
+        identity_id = identity_ids[0]
+        assert store.get_entity(identity_id).curation_epoch == created_epoch  # type: ignore[union-attr]
+
+        revoke = Compensator().compensate(plan, against_snapshot=created_epoch)
+        assert revoke.plan is not None
+        revoked_at = executor.execute(revoke.plan, is_compensation=True)
+        assert revoked_at.committed and revoked_at.new_epoch is not None
+        assert store.get_entity(identity_id) is None
+
+        # Compensating the compensation is a CREATE_IDENTITY.
+        restore = Compensator().compensate(revoke.plan, against_snapshot=revoked_at.new_epoch)
+        assert restore.plan is not None
+        assert [op.type for op in restore.plan.operations] == [
+            CurationOperationType.CREATE_IDENTITY
+        ] * self.RUN_SIZE
+        restored_at = executor.execute(restore.plan, is_compensation=True)
+        assert restored_at.committed and restored_at.new_epoch is not None
+
+        back = store.get_entity(identity_id)
+        assert back is not None
+        assert back.status is CurationStatus.ACTIVE  # the identity IS restored
+        # ...and the epoch is not. Asserted as the relationship, not a literal:
+        # the restored record takes the epoch of the batch that re-created it.
+        assert back.curation_epoch == restored_at.new_epoch
+        assert back.curation_epoch != created_epoch
+
+    def test_a_named_inverse_does_not_mean_an_executable_rollback(
+        self, clock: FixedClock, auto_scores: CandidateScores
+    ) -> None:
+        # `INVERSE_OPERATION_TYPES` answers "what type reverses this type" — a
+        # vocabulary statement — NOT "can this plan be rolled back today".
+        # A caller must consult both it and the executor's supported set.
+        # Measured on the merged contract: 7 types have a named inverse, the
+        # reference store executes 3.
+        named_inverse = {t for t in INVERSE_OPERATION_TYPES}
+        assert CurationOperationType.RETRACT_ASSERTION in named_inverse
+        assert CurationOperationType.RETRACT_ASSERTION not in DEFAULT_SUPPORTED_OPERATIONS
+        assert named_inverse - DEFAULT_SUPPORTED_OPERATIONS  # the gap is non-empty
+
+        # The gap is not theoretical: an attach plan reports fully_compensable
+        # and its rollback still cannot execute.
+        engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
+        plan = engine.curate(
+            [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
+        ).plan
+        assert plan is not None
+        result = Compensator().compensate(plan, against_snapshot=1)
+        assert result.fully_compensable is True  # vocabulary says yes...
+        assert result.plan is not None
+
+        store = MemoryGraphStore()
+        record = PlanExecutor(store, clock=clock).execute(result.plan, is_compensation=True)
+        assert record.outcome is ExecutionOutcome.UNSUPPORTED_OPERATION  # ...execution says no
         assert "RETRACT_ASSERTION" in record.unsupported_types
         assert store.current_epoch() == 0

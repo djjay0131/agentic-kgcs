@@ -10,16 +10,24 @@ reverse order, so the last thing applied is the first thing undone.
 
 Four facts make this honest rather than aspirational:
 
-- **The inverse map is explicit, and some operations have no inverse in the
-  v1 vocabulary.** `ATTACH_ASSERTION`↔`RETRACT_ASSERTION`,
+- **The inverse map is published by the contract, and some operations still
+  have no inverse.** `INVERSE_OPERATION` is a projection of
+  `kg_contracts.INVERSE_OPERATION_TYPES`, never a hand-kept second copy.
+  `CREATE_IDENTITY`↔`REVOKE_IDENTITY` (KGIS ADR-0025),
+  `ATTACH_ASSERTION`↔`RETRACT_ASSERTION`,
   `MERGE_IDENTITIES`↔`SPLIT_IDENTITY`, and `REASSIGN_ASSERTION` (self-inverse)
-  are compensable. `CREATE_IDENTITY` and `PROMOTE_ONTOLOGY_TERM` have **no**
-  reversing operation type in `CurationOperationType` — there is no
-  "un-create identity" or "demote ontology term" — so they are reported as
+  are compensable. `PROMOTE_ONTOLOGY_TERM` has **no** reversing operation type
+  — there is no "demote ontology term" — so it is reported as
   `non_compensable` rather than papered over. That is invariant 8 stated
   precisely: every operation is either compensable or *explicitly declared
   non-compensable* (and a caller must block auto-execution of a rollback that
   cannot fully reverse).
+
+  **A named inverse is not an executable rollback.** `INVERSE_OPERATION`
+  answers "what type reverses this type"; whether the rollback can actually be
+  applied depends on what the executing store implements. Seven types have a
+  named inverse; the reference store applies three. `fully_compensable` means
+  the former and nothing stronger.
 - **The reversal payload comes from the contract's own `reversal_data`, not a
   guess — and it is a *payload*, not the whole dict.** A producer puts the
   inverse operation's payload under `INVERSE_PAYLOAD_KEY`; the rest of
@@ -70,6 +78,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from kg_contracts.curation import (
+    INVERSE_OPERATION_TYPES,
     CurationOperation,
     CurationOperationType,
     CurationPlan,
@@ -85,16 +94,22 @@ from kgcs.planner import (
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 
 #: The reversing operation type for each `CurationOperationType`, or `None`
-#: when the v1 vocabulary has no inverse. Kept declarative so the compensable
-#: set is auditable at a glance and widening it is a data change.
+#: when the vocabulary has no inverse.
+#:
+#: **Derived from `kg_contracts.INVERSE_OPERATION_TYPES`, never hand-maintained**
+#: (KGIS ADR-0025). The contract publishes the vocabulary half of the pair so
+#: the two repos cannot disagree about which type reverses which; a second
+#: table here, transcribed by hand, is precisely how they would drift — and
+#: did: `CREATE_IDENTITY` sat in this file as non-compensable for a full
+#: release after the contract gained `REVOKE_IDENTITY`.
+#:
+#: The projection is total over `CurationOperationType` while the contract map
+#: is deliberately partial: a type the contract omits is *declared*
+#: non-compensable here rather than silently absent, which is what lets a
+#: caller distinguish "cannot be reversed" from "nobody considered it".
+#: `PROMOTE_ONTOLOGY_TERM` is the only such type today (KGIS issue #45).
 INVERSE_OPERATION: dict[CurationOperationType, CurationOperationType | None] = {
-    CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
-    CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
-    CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
-    CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
-    CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
-    CurationOperationType.CREATE_IDENTITY: None,
-    CurationOperationType.PROMOTE_ONTOLOGY_TERM: None,
+    op_type: INVERSE_OPERATION_TYPES.get(op_type) for op_type in CurationOperationType
 }
 
 
@@ -140,10 +155,12 @@ class Compensator:
         id_factory: IdFactory | None = None,
         snapshot_version: str = DEFAULT_SNAPSHOT_VERSION,
         policy_version: str = DEFAULT_POLICY_VERSION,
+        allow_legacy_reversal_data: bool = False,
     ) -> None:
         self._ids = id_factory or DerivedIdFactory()
         self._snapshot_version = snapshot_version
         self._policy_version = policy_version
+        self._allow_legacy_reversal_data = allow_legacy_reversal_data
 
     def compensate(
         self, plan: CurationPlan, *, against_snapshot: str | int
@@ -222,15 +239,33 @@ class Compensator:
 
         The inverse's payload is the original's `reversal_data[INVERSE_PAYLOAD_KEY]`
         — the contract's "what is needed to undo this", separated from the
-        lineage/provenance that shares the dict. Operations whose producer
-        predates the key fall back to the whole `reversal_data`, which is what
-        this did before ADR-0018. The inverse's own `reversal_data` records the
-        original type and payload (and offers that payload as *its* inverse
-        payload) so the compensation is itself reversible and traceable back to
-        what it undid.
+        lineage/provenance that shares the dict. The inverse's own
+        `reversal_data` records the original type and payload (and offers that
+        payload as *its* inverse payload) so the compensation is itself
+        reversible and traceable back to what it undid.
+
+        **Two silent fallbacks used to live here; both are now loud.**
+
+        ADR-0018 added a back-compat path: if `INVERSE_PAYLOAD_KEY` was absent,
+        the *whole* `reversal_data` became the payload. Its intended
+        precondition was "this producer predates the key". Its actual
+        precondition is "`reversal_data` holds nothing but the payload" — and
+        those are different things. Mutation proved it: removing the key from
+        the planner's `CREATE_IDENTITY` left the rollback committing happily
+        with `candidate_id` — lineage — inside the operation payload, which is
+        the exact defect ADR-0018 introduced the key to fix. A fallback whose
+        real precondition nobody checks is a silent corruption path, so it is
+        now opt-in via `allow_legacy_reversal_data` and off by default.
+
+        The second was undisclosed until review: a `INVERSE_PAYLOAD_KEY` that
+        is *present but malformed* (not a mapping) fell through the same
+        `isinstance` branch, so the payload became the whole `reversal_data` —
+        leaking lineage **and the sentinel key `inverse_payload` itself**, a
+        shape no consumer expects. That case raises unconditionally: it is
+        never back-compat, it is always a bug in the producer, and no opt-in
+        excuses it.
         """
-        raw = op.reversal_data.get(INVERSE_PAYLOAD_KEY)
-        payload = dict(raw) if isinstance(raw, Mapping) else dict(op.reversal_data)
+        payload = self._inverse_payload(op)
         return CurationOperation(
             operation_id=self._ids.operation_id(f"{op.operation_id}:compensate"),
             type=inverse_type,
@@ -242,6 +277,43 @@ class Compensator:
                 "original_payload": op.payload,
             },
         )
+
+    def _inverse_payload(self, op: CurationOperation) -> dict[str, object]:
+        """The payload for `op`'s inverse, or raise saying exactly what is wrong.
+
+        Three cases, deliberately distinguished rather than collapsed into one
+        `isinstance` test:
+
+        - a well-formed mapping under `INVERSE_PAYLOAD_KEY` — the only case
+          that is correct, and the one every in-repo producer emits;
+        - the key **present but not a mapping** — always a producer bug, always
+          raises, regardless of `allow_legacy_reversal_data`;
+        - the key **absent** — a pre-ADR-0018 producer. Raises by default;
+          with `allow_legacy_reversal_data=True` the whole `reversal_data` is
+          used, which is only safe when the caller knows it holds nothing but
+          the payload.
+        """
+        if INVERSE_PAYLOAD_KEY in op.reversal_data:
+            raw = op.reversal_data[INVERSE_PAYLOAD_KEY]
+            if not isinstance(raw, Mapping):
+                raise ValueError(
+                    f"operation {op.operation_id!r} ({op.type.value}) carries a "
+                    f"malformed {INVERSE_PAYLOAD_KEY!r}: expected a mapping, got "
+                    f"{type(raw).__name__}. Falling back would put the sentinel key "
+                    "and the operation's lineage into the inverse payload."
+                )
+            return dict(raw)
+
+        if not self._allow_legacy_reversal_data:
+            raise ValueError(
+                f"operation {op.operation_id!r} ({op.type.value}) carries no "
+                f"{INVERSE_PAYLOAD_KEY!r}, so its inverse payload is unknown. Using "
+                "the whole reversal_data instead would put any lineage it carries "
+                "into the inverse payload. Fix the producer, or construct the "
+                "Compensator with allow_legacy_reversal_data=True if this "
+                "reversal_data is known to hold nothing but the payload."
+            )
+        return dict(op.reversal_data)
 
     def _snapshot_preconditions(
         self, plan: CurationPlan, snapshot: str

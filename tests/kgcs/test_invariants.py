@@ -128,19 +128,36 @@ def test_stale_preconditions_prevent_commit(
 
 def test_every_operation_is_compensable_or_declared_non_compensable() -> None:
     """Law 8: every curation operation type either has an inverse or is
-    explicitly declared non-compensable — nothing is silently unhandled."""
+    explicitly declared non-compensable — nothing is silently unhandled.
+
+    `INVERSE_OPERATION` is now a projection of the contract's
+    `INVERSE_OPERATION_TYPES` over `CurationOperationType`, so the exhaustive-
+    keys assertion this test used to make became true by construction — it
+    could no longer fail, whatever either repo did. What can still fail, and
+    is what the law actually needs, is **agreement**: KGCS must not disagree
+    with the published map about any type it names, and must not quietly
+    invent an inverse for a type the contract deliberately omits.
+    """
+    from kg_contracts.curation import INVERSE_OPERATION_TYPES
+
     from kgcs.executor.compensate import INVERSE_OPERATION
 
-    assert set(INVERSE_OPERATION) == set(CurationOperationType)
-    compensable = {t for t, inv in INVERSE_OPERATION.items() if inv is not None}
+    # 1. KGCS agrees with the contract wherever the contract has an opinion.
+    assert {t: INVERSE_OPERATION[t] for t in INVERSE_OPERATION_TYPES} == dict(
+        INVERSE_OPERATION_TYPES
+    )
+    # 2. Every type the contract omits is declared non-compensable, never
+    #    given a locally invented inverse.
+    omitted = set(CurationOperationType) - set(INVERSE_OPERATION_TYPES)
+    assert {INVERSE_OPERATION[t] for t in omitted} <= {None}
+    # 3. The split itself, named — a new op type cannot land without someone
+    #    deciding its reversibility.
     non_compensable = {t for t, inv in INVERSE_OPERATION.items() if inv is None}
-    # the v1 vocabulary's declared split, stated explicitly so a new op type
-    # cannot be added without deciding its reversibility
-    assert non_compensable == {
-        CurationOperationType.CREATE_IDENTITY,
-        CurationOperationType.PROMOTE_ONTOLOGY_TERM,
-    }
-    assert CurationOperationType.ATTACH_ASSERTION in compensable
+    assert non_compensable == {CurationOperationType.PROMOTE_ONTOLOGY_TERM}
+    assert (
+        INVERSE_OPERATION[CurationOperationType.CREATE_IDENTITY]
+        is CurationOperationType.REVOKE_IDENTITY
+    )
 
 
 def test_compensation_never_mutates_the_graph_by_itself(

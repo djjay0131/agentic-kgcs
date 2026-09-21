@@ -204,6 +204,11 @@ class CurationPlanner:
         via `resolved_identity`; the planner never mints a second one. Entity
         `properties` are not materialized in v1 — an identity is created as a
         shell, and its properties would become attribute assertions later.
+
+        `reversal_data` carries a `REVOKE_IDENTITY` payload under
+        `INVERSE_PAYLOAD_KEY`, which is what makes this operation compensable
+        (KGIS ADR-0025). Before that type existed there was no inverse to
+        carry and the field held lineage alone.
         """
         identity_id = resolution.resolved_identity
         if identity_id is None or not resolution.create_new_identity:
@@ -217,16 +222,18 @@ class CurationPlanner:
             created_at=candidate.created_at,
             curation_epoch=0,
         )
+        operation_id = self._ids.operation_id(
+            self._op_seed(candidate, CurationOperationType.CREATE_IDENTITY)
+        )
         return CurationOperation(
-            operation_id=self._ids.operation_id(
-                self._op_seed(candidate, CurationOperationType.CREATE_IDENTITY)
-            ),
+            operation_id=operation_id,
             type=CurationOperationType.CREATE_IDENTITY,
             payload=_entity_payload(entity),
-            # No INVERSE_PAYLOAD_KEY, deliberately: CREATE_IDENTITY has no
-            # inverse in the v1 vocabulary (INVERSE_OPERATION maps it to None),
-            # so there is no inverse payload to carry. Both fields are lineage.
-            reversal_data={"identity_id": identity_id, "candidate_id": candidate.candidate_id},
+            reversal_data={
+                INVERSE_PAYLOAD_KEY: revoke_inverse_payload(identity_id, operation_id),
+                "identity_id": identity_id,
+                "candidate_id": candidate.candidate_id,
+            },
         )
 
     def _attach_attribute(
@@ -405,6 +412,30 @@ def _assertion_payload(assertion: Assertion) -> dict[str, object]:
     return payload
 
 
+def revoke_inverse_payload(identity_id: str, created_by_operation_id: str) -> dict[str, object]:
+    """The `REVOKE_IDENTITY` payload that undoes creating `identity_id`.
+
+    **An identity reference, not an entity dump** (KGIS ADR-0025). The executor
+    revokes the entity actually in the graph, so a stale copy carried in the
+    plan cannot overwrite it; the pre-revoke entity travels instead in the
+    compensating operation's own `reversal_data`, which is what makes the
+    revoke compensable by a `CREATE_IDENTITY` in turn. `_entity_payload` — the
+    forward payload — is that entity dump, and `Compensator._invert` already
+    puts it there generically, so this function deliberately does *not*
+    duplicate it.
+
+    `reason` is optional in the contract and supplied here because a tombstone
+    with no stated cause is an audit dead end. It names the operation being
+    undone rather than a timestamp or a run id: the compensator is pure and
+    holds no clock, so every field must be a function of the plan alone or a
+    replayed compensation would not be byte-identical.
+    """
+    return {
+        "identity_id": identity_id,
+        "reason": f"rollback of CREATE_IDENTITY {created_by_operation_id}",
+    }
+
+
 def retract_inverse_payload(assertion: Assertion, subject_identity: str) -> dict[str, object]:
     """The `RETRACT_ASSERTION` payload that undoes attaching `assertion`.
 
@@ -423,13 +454,20 @@ def retract_inverse_payload(assertion: Assertion, subject_identity: str) -> dict
     Two deliberate choices, both recorded in ADR-0018:
 
     - **`new_status=SUPERSEDED`, not `REVOKED`.** `REVOKED` is the semantically
-      purer reading of "this attachment is withdrawn" — nothing superseded it —
-      but the canonical read surface hides only `SUPERSEDED` by default
-      (`GraphReadOptions.include_superseded`; `kg_contracts` issue #8 records
-      that there is deliberately no `include_revoked`). A rolled-back record
-      marked `REVOKED` would stay visible to an ordinary read, which is the
-      opposite of a rollback. Changing that is a read-semantics ADR upstream,
-      not a decision to smuggle in here.
+      purer reading of "this attachment is withdrawn" — nothing superseded it.
+      ADR-0018 chose `SUPERSEDED` because the canonical read surface then hid
+      only `SUPERSEDED` by default, so a record marked `REVOKED` would have
+      stayed visible to an ordinary read — the opposite of a rollback — and
+      said the fix was "a read-semantics ADR upstream, not a decision to
+      smuggle in here."
+
+      **That ADR has since happened:** KGIS ADR-0025 adds
+      `GraphReadOptions.include_revoked` and hides `REVOKED` by default, so the
+      obstacle ADR-0018 named is gone and the purer reading is now available.
+      Switching this to `REVOKED` is deliberately **not** done here: it would
+      change the observable behaviour of an ADR-0018 decision the owner has
+      not finished reviewing, and it is a KGCS-local durable decision in its
+      own right. Filed as an open question on this PR, not smuggled in either.
     - **`superseded_at` is the assertion's own `recorded_at`.** The compensator
       is pure and holds no clock (a replayed compensation must be
       byte-identical), so the instant must come from the plan. Closing the
