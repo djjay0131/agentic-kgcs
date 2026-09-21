@@ -144,6 +144,8 @@ from kgcs.planner import (
     PlannedOperation,
     PlanResult,
     ResolvedCandidate,
+    assertion_absent_guard,
+    read_assertion_absent_guard,
 )
 from kgcs.policy import ResolutionPolicy
 from kgcs.profiles import (
@@ -235,6 +237,8 @@ __all__ = [
     "default_validator",
     "ResolutionPolicy",
     "CurationPlanner",
+    "assertion_absent_guard",
+    "read_assertion_absent_guard",
     "PlanResult",
     "PlannedOperation",
     "ResolvedCandidate",

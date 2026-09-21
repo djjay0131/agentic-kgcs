@@ -2,6 +2,7 @@
 
 from typing import Sequence
 
+import pytest
 from kg_contracts.assertions import Assertion, CanonicalEntity
 from kg_contracts.candidates import (
     Candidate,
@@ -9,7 +10,7 @@ from kg_contracts.candidates import (
     RelationCandidate,
     SourceCoordinates,
 )
-from kg_contracts.curation import CurationOperationType, CurationPlan
+from kg_contracts.curation import CurationOperationType, CurationPlan, Precondition
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import (
     make_attribute_candidate,
@@ -137,6 +138,59 @@ class TestPreconditionsAndEvidence:
         version_guards = [p for p in plan.preconditions if p.kind == "entity_version"]
         assert len(version_guards) == 1
         assert version_guards[0].expected == "0"
+
+    def test_attach_assertion_guards_its_minted_assertion_id(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        # ADR-0019: the symmetric counterpart of entity_version=0. Read-free,
+        # because the planner minted the assertion id itself.
+        subject = known_identity()
+        plan = _plan(
+            [make_attribute_candidate(graph_id=GRAPH_ID, subject=subject, scores=auto_scores)]
+        )
+        assert plan is not None
+        assert plan.operations[0].type is CurationOperationType.ATTACH_ASSERTION
+        guards = [p for p in plan.preconditions if p.kind == "assertion_absent"]
+        assert len(guards) == 1
+        assert guards[0].subject == subject
+        assert guards[0].expected == plan.operations[0].payload["assertion_id"]
+
+    def test_the_guard_round_trips_through_its_own_reader(self) -> None:
+        # ADR-0019 claims one constructor and one reader are the only places
+        # that decide which field holds which. That is only true if the reader
+        # exists and refuses everything else — the executor calls it, so a
+        # reader that silently accepted a snapshot guard would hand the
+        # executor a graph id where an assertion id belongs.
+        from kgcs import assertion_absent_guard, read_assertion_absent_guard
+
+        guard = assertion_absent_guard("kg://g1/identity/ABC", "as_XYZ")
+        assert read_assertion_absent_guard(guard) == ("kg://g1/identity/ABC", "as_XYZ")
+        for wrong in (
+            Precondition(kind="snapshot_version", subject="g1", expected="0"),
+            Precondition(kind="entity_version", subject="kg://g1/identity/ABC", expected="0"),
+        ):
+            with pytest.raises(ValueError, match="not an assertion_absent precondition"):
+                read_assertion_absent_guard(wrong)
+
+    def test_every_attach_operation_gets_its_own_guard(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        # One guard per attach, not one per plan: a two-attach plan replayed
+        # after only one of its assertions landed must still be refused.
+        candidates = [
+            make_attribute_candidate(
+                graph_id=GRAPH_ID, subject=known_identity(), attribute=name, scores=auto_scores
+            )
+            for name in ("height_cm", "width_cm")
+        ]
+        plan = _plan(candidates)
+        assert plan is not None
+        attach_ops = [
+            op for op in plan.operations if op.type is CurationOperationType.ATTACH_ASSERTION
+        ]
+        assert len(attach_ops) == 2
+        guarded = [p.expected for p in plan.preconditions if p.kind == "assertion_absent"]
+        assert guarded == [str(op.payload["assertion_id"]) for op in attach_ops]
 
     def test_evidence_ids_are_deduplicated_in_order(self, auto_scores: CandidateScores) -> None:
         from kg_contracts.evidence import EvidenceRef, EvidenceRelationship

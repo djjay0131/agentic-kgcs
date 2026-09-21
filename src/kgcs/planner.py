@@ -26,14 +26,19 @@ through `model_dump_json`). The planner holds no mutable state and copies
 nothing in place; it only reads frozen inputs and constructs frozen outputs
 (the "planner never mutates state" invariant).
 
-Two guarantees keep an emitted plan applicable:
+Three guarantees keep an emitted plan applicable:
 
 - A `CREATE_IDENTITY` carries an `entity_version`/`expected="0"` precondition:
   the minted identity must not already exist. `MemoryGraphStore` enforces it.
+- An `ATTACH_ASSERTION` carries the symmetric guard for the record *it* mints:
+  an `assertion_absent` precondition naming the subject identity and the
+  assertion id, i.e. "this assertion must not already be on this subject."
+  Read-free, because the planner minted that assertion id itself. `PlanExecutor`
+  enforces it (ADR-0019); the reference store ignores unknown kinds.
 - A plan-level `snapshot_version` precondition records the graph snapshot the
-  plan was computed against. The Plan-1 executor does not enforce non-
+  plan was computed against. The Plan-1 *store* does not enforce non-
   `entity_version` preconditions, but the guard is part of the plan's
-  immutable provenance so a later executor can reject a stale plan.
+  immutable provenance and `PlanExecutor` enforces it against the graph epoch.
 """
 
 from dataclasses import dataclass
@@ -61,6 +66,11 @@ from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
 
 SNAPSHOT_PRECONDITION_KIND = "snapshot_version"
 ENTITY_VERSION_PRECONDITION_KIND = "entity_version"
+#: Per-subject guard on an `ATTACH_ASSERTION` (ADR-0019). `subject` is the
+#: assertion's subject identity — the same field shape `entity_version` uses —
+#: and `expected` is the `assertion_id` that must **not** already be attached
+#: to it. The `kind` supplies the polarity: absence, not a version match.
+ASSERTION_ABSENT_PRECONDITION_KIND = "assertion_absent"
 DEFAULT_POLICY_VERSION = "1"
 
 #: The `reversal_data` key holding the *inverse operation's payload*.
@@ -348,11 +358,20 @@ class CurationPlanner:
         """The plan's optimistic-concurrency guards, in a fixed order.
 
         The snapshot guard comes first (the whole plan was computed against
-        one snapshot), then an `entity_version=0` guard per minted identity
-        so a `CREATE_IDENTITY` refuses to clobber an id that already exists.
-        `ATTACH_ASSERTION` emits no per-subject version guard: knowing a
-        subject's current version needs a graph read, which Sprint 1 does not
-        do (see the ADR candidate on snapshot-free preconditions).
+        one snapshot), then one per-subject guard per operation, in operation
+        order:
+
+        - `CREATE_IDENTITY` → `entity_version=0`: the minted identity must not
+          already exist, so a create refuses to clobber an id that is there.
+        - `ATTACH_ASSERTION` → `assertion_absent`: the minted assertion id must
+          not already be attached to this subject, so a replayed attach is
+          refused instead of silently duplicating the record (ADR-0019).
+
+        Both guards are read-free and *symmetric*: each names the record this
+        operation would mint and requires it to be absent. Neither is a guard
+        on the subject's current version, which would need the graph read the
+        deterministic core does not do (ADR candidate 0003) and would also
+        refuse any unrelated concurrent change to the subject.
         """
         preconditions: list[Precondition] = [
             Precondition(
@@ -372,6 +391,10 @@ class CurationPlanner:
                             expected="0",
                         )
                     )
+            elif item.operation.type is CurationOperationType.ATTACH_ASSERTION:
+                guard = _assertion_absent_guard(item.operation)
+                if guard is not None:
+                    preconditions.append(guard)
         return tuple(preconditions)
 
     def _evidence_ids(self, planned: Sequence[PlannedOperation]) -> tuple[str, ...]:
@@ -390,6 +413,56 @@ class CurationPlanner:
 
     def _op_seed(self, candidate: Candidate, op_type: CurationOperationType) -> str:
         return f"{candidate.candidate_id}:{op_type.value}"
+
+
+def assertion_absent_guard(
+    subject_identity: str, assertion_id: str
+) -> Precondition:
+    """Build the `assertion_absent` guard for one attach (ADR-0019).
+
+    Paired with `read_assertion_absent_guard`: between them they are the only
+    two places that decide which `Precondition` field holds the subject and
+    which holds the assertion id. Writers call this, the enforcing executor
+    calls the reader, and neither re-derives the field roles positionally —
+    which is what makes "producers and the enforcer cannot disagree" a fact
+    about the code rather than a hope.
+    """
+    return Precondition(
+        kind=ASSERTION_ABSENT_PRECONDITION_KIND,
+        subject=subject_identity,
+        expected=assertion_id,
+    )
+
+
+def read_assertion_absent_guard(precondition: Precondition) -> tuple[str, str]:
+    """Read an `assertion_absent` guard back as `(subject_identity, assertion_id)`.
+
+    The inverse of `assertion_absent_guard`, and the only supported way to
+    interpret one. Raises `ValueError` for any other kind, so a caller cannot
+    quietly read a `snapshot_version` or `entity_version` guard through it and
+    get a plausible-looking pair of strings back.
+    """
+    if precondition.kind != ASSERTION_ABSENT_PRECONDITION_KIND:
+        raise ValueError(
+            f"not an {ASSERTION_ABSENT_PRECONDITION_KIND} precondition: "
+            f"kind={precondition.kind!r}"
+        )
+    return precondition.subject, precondition.expected
+
+
+def _assertion_absent_guard(operation: CurationOperation) -> Precondition | None:
+    """Read the attach guard's two coordinates off the operation's payload.
+
+    Returns `None` only if the payload is not a well-formed assertion (no
+    string `subject_identity`/`assertion_id`) — impossible for an operation
+    this planner built, but the payload type is `dict[str, object]`, so the
+    narrowing is explicit rather than an unchecked cast.
+    """
+    subject = operation.payload.get("subject_identity")
+    assertion_id = operation.payload.get("assertion_id")
+    if not isinstance(subject, str) or not isinstance(assertion_id, str):
+        return None
+    return assertion_absent_guard(subject, assertion_id)
 
 
 def _entity_payload(entity: CanonicalEntity) -> dict[str, object]:

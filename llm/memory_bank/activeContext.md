@@ -1,5 +1,76 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (PR #36 re-review — two defects found INSIDE the fixes):
+both original blockers confirmed closed, and re-review found two new ones in
+the fixes themselves, both reproduced here before being fixed.
+
+**NEW-1 (prose).** The F3 fix replaced a false property with a caller contract
+that prescribed two remedies, and *both were wrong*. Routing new evidence
+through `recuration.evolution.plan_supersession` **destroys the fact**: it
+emits `ATTACH(new)` then `RETRACT(old.assertion_id)`, and for an
+evidence-independent producer those are the same id, so it attaches a record
+and immediately retracts it. Measured: `COMMITTED`, live graph empty, the sole
+history row rewritten to cite `ev_B`, `ev_A` cited nowhere. The other remedy
+(fold evidence into `candidate_id`) corrupts corroboration. ADR-0019 now
+prescribes **no** workaround and says plainly there is no currently-supported
+path, pointing at PR #39. The `plan_supersession` defect is its own issue #40.
+
+**NEW-2 (code).** `_self_conflicting_guards` counted `plan.preconditions`, so
+it protected only plans that already carried `assertion_absent` guards and
+missed every plan that did not — including everything
+`recuration.evolution`/`ontology` emit, since both attach one snapshot guard
+and nothing else. Those committed the duplicate byte-identically to pre-fix.
+Now counted over **`plan.operations`** (still reader-free, so still holds over
+a write-only store), with guards synthesized via the same
+`assertion_absent_guard` constructor.
+
+**Lesson for this repo:** a check keyed off a *derived annotation* rather than
+the *thing being written* protects only well-annotated callers. Both defects
+were third-order — a defect inside a fix for a defect inside a fix.
+
+**Repo-wide fact:** kgcs `main` (14ffd0e) is currently RED against
+`agentic-kgis` main (de48639) — `test_every_operation_is_compensable_or_declared_non_compensable`
+fails because KGCS's hand-maintained `INVERSE_OPERATION` lacks `REVOKE_IDENTITY`.
+PR #38 is the repair. Any PR branched before #38 inherits this failure.
+
+Update 2026-09-21 (post-v1 platform fix): **`ATTACH_ASSERTION` now carries a
+per-subject guard (ADR-0019).** Branch
+`fix/attach-assertion-absence-precondition`, opened after the `agentic-kg`
+adopter wiring its curation pipeline hit a replayed attach. Reproduced here
+against the reference `MemoryGraphStore` on `v1.0.0` (609270e) and re-verified
+on 14ffd0e: re-planning an already-committed candidate against the graph's
+**current** snapshot satisfies the plan-level `snapshot_version` guard and
+re-applies the attach — measured `COMMITTED`, epoch 1→2, and two rows on the
+subject carrying **one** `assertion_id`. The same replay of a `CREATE_IDENTITY`
+is correctly refused `STALE` by its `entity_version=0` guard, so replay
+protection was inconsistent *within one planner*. The duplicate is worse than
+redundant: `mark_superseded(assertion_id)` reaches only the first row.
+
+Fix. The planner emits, per attach,
+`Precondition(kind="assertion_absent", subject=<subject_identity>,
+expected=<assertion_id>)` — the exact analogue of `entity_version=0`, and
+read-free because the planner minted that id, so ADR candidate 0003's
+snapshot-read objection does not apply (0003 is narrowed, not retired: it
+remains correct for a subject-*version* guard). `PlanExecutor` enforces it
+alongside the snapshot guard, reading with `include_superseded=True` so a
+superseded record still blocks a replay of its id. **No `kg_contracts`
+change** — `Precondition.kind` is a free-form `str`. Legitimate re-assertion
+still applies: new evidence arrives as a new candidate, which derives a
+different `assertion_id`. Residual, pinned by test rather than left implicit:
+both executor-enforced guards need a `GraphReader`; over a write-only store
+neither is enforceable. Out of scope, noted in the ADR: `recuration.evolution`
+and `recuration.ontology` build their own plans and still emit only the
+snapshot guard.
+
+**Environment note for future sessions:** `/mnt/c/code/agentic-kgis` may hold an
+in-flight working tree (a concurrent agent). Pin local runs to a clean checkout
+of agentic-kgis `origin/main` — CI installs `agentic-kgis @ git+...@main` — or
+unrelated in-flight `kg_contracts` edits surface as failures here. Observed
+2026-09-21: an in-flight `ResolutionDecision` validator ("create_new_identity=True
+forbids resolved_identity") makes `kgcs.policy.ResolutionPolicy.resolve` raise
+for every AUTO-routed entity candidate. **That is an upstream-sequencing item
+for the owner, not a KGCS defect** — but it will break this repo on the day it
+lands unless `ResolutionPolicy` is updated in the same sequence.
 Update 2026-09-21 (#38 review — R22): **release-critical criterion MET** —
 identity rollback is genuinely demonstrated to the standard the downstream
 brief demands. Three narrow fixes landed on top.
