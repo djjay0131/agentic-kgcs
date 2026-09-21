@@ -1,5 +1,45 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (post-v1 defect fix, **DESIGN PROPOSAL awaiting owner
+acceptance**): **ADR-0021 — a fact's identity and a record's identity are
+distinct; `assertion_id` is the record.** Branch
+`fix/record-identity-for-evidence-evolution`, opened after the `agentic-kg`
+adopter's release-critical evidence-evolution criterion could not be met.
+
+The defect: `assertion_id = f(candidate_id)`, and the adopter's `candidate_id`
+is `(graph_id, candidate_kind, semantic_key)` with evidence deliberately
+excluded. So the model could not hold two records of one fact — which is what
+supersession is. Three routes measured on `main` @ `14ffd0e`: `snapshot="0"`
+→ `STALE`, the evidence never lands; live epoch → `COMMITTED` by in-place
+overwrite, the prior record's evidence gone; **`plan_supersession` — the
+designed path — → `COMMITTED` and the fact DISAPPEARS, because it supersedes
+itself.** Correct API, green result, silent data loss.
+
+The evidence-free candidate identity is **correct** and is not the bug: the
+same fact from two sources is corroboration, not two facts. The fix separates
+the two jobs one identifier was doing. New module `kgcs.records`: `fact_key`
+(derived, `(subject_identity, predicate)`) is the fact; `record_seed`
+(object + valid period + evidence, **no clock**) is the record.
+`CurationPlanner` mints `assertion_id` from the record seed;
+`ConceptEvolutionPlanner.next_record()` mints a successor on the re-curation
+path; `plan_supersession` now refuses self-supersession, cross-fact
+supersession, and superseding an already-`SUPERSEDED` record.
+
+Demonstrated, not asserted: `tests/kgcs/test_e2e_evidence_evolution.py` runs
+the round trip and reads it back by identity — both records present, the live
+read showing the latest, the prior reachable with `include_superseded=True`
+still citing its own evidence.
+
+**Open for the owner:** existing graphs hold ids minted under the old seed, so
+the first re-plan after this change attaches a second `ACTIVE` record rather
+than being refused by ADR-0019's `assertion_absent` guard. Needs a backfill or
+an epoch boundary — see ADR-0021 §Risks. Also: PR #36's
+`test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence`
+asserts the behaviour this change deliberately reverses; whichever merges
+second must update it.
+
+
+
 Update 2026-09-21 (PR #36 re-review — two defects found INSIDE the fixes):
 both original blockers confirmed closed, and re-review found two new ones in
 the fixes themselves, both reproduced here before being fixed.

@@ -11,6 +11,7 @@ from kg_contracts.candidates import (
     SourceCoordinates,
 )
 from kg_contracts.curation import CurationOperationType, CurationPlan, Precondition
+from kg_contracts.curation import CurationOperationType, CurationPlan
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import (
     make_attribute_candidate,
@@ -20,6 +21,10 @@ from kg_contracts.testing.memory import MemoryGraphStore
 
 from helpers import GRAPH_ID, known_identity
 from kgcs import CurationPlanner, ResolutionPolicy, ResolvedCandidate
+
+#: One fixed subject identity, module-level, so every record-identity test
+#: varies only what it names.
+_FIXED_SUBJECT = known_identity()
 
 
 def _resolve(candidates: Sequence[Candidate]) -> list[ResolvedCandidate]:
@@ -229,3 +234,103 @@ class TestDeterminismAndPurity:
         planner.plan(resolved)
         planner.plan(resolved)  # a second call must see identical inputs
         assert candidate.model_dump_json() == before
+
+
+class TestRecordIdentity:
+    """ADR-0021: `assertion_id` is a RECORD id, not a fact id.
+
+    The adopter's `candidate_id` is derived from `(graph_id, candidate_kind,
+    semantic_key)` with evidence deliberately excluded — correctly, because the
+    same fact from two sources is corroboration, not two facts. These tests pin
+    that a re-assertion of that one candidate with NEW evidence mints a
+    DISTINCT record, while a byte-identical replay does not.
+
+    Every assertion here is by identity. A row count cannot tell a second
+    record of a fact from an overwrite of the first, which is the exact way
+    this defect stayed invisible.
+    """
+
+    @staticmethod
+    def _attribute(
+        scores: CandidateScores, *, evidence: tuple[str, ...], value: object = 2015
+    ) -> Candidate:
+        """One fixed candidate id, one fixed subject, varying evidence.
+
+        `candidate_id` is pinned so the *only* thing that differs between two
+        calls is what the test names — reproducing the adopter's shape, where
+        re-ingesting the same fact mints the same candidate id.
+        """
+        from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+
+        refs = tuple(
+            EvidenceRef(evidence_id=e, relationship=EvidenceRelationship.SUPPORTS)
+            for e in evidence
+        )
+        candidate = make_attribute_candidate(
+            graph_id=GRAPH_ID,
+            subject=_FIXED_SUBJECT,
+            attribute="proposed_year",
+            value=value,
+            scores=scores,
+        )
+        return candidate.model_copy(
+            update={"candidate_id": "cand_FIXED", "evidence_refs": refs}
+        )
+
+    def _assertion_id(self, candidate: Candidate) -> str:
+        plan = _plan([candidate])
+        assert plan is not None, "fixture broken: candidate produced no plan"
+        (operation,) = plan.operations
+        assert operation.type is CurationOperationType.ATTACH_ASSERTION
+        return str(operation.payload["assertion_id"])
+
+    def test_new_evidence_under_one_candidate_id_mints_a_distinct_record(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        first = self._attribute(auto_scores, evidence=("ev_a",))
+        later = self._attribute(auto_scores, evidence=("ev_b",))
+        assert first.candidate_id == later.candidate_id  # the fact is the same fact
+        assert self._assertion_id(first) != self._assertion_id(later)
+
+    def test_a_byte_identical_replay_mints_the_same_record(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        """The other half: without this the guard against a true replay is gone.
+
+        ADR-0019's `assertion_absent` precondition refuses an attach whose
+        record id is already in the graph. That refusal only stays correct for
+        a genuine replay if a genuine replay still mints the same id.
+        """
+        first = self._attribute(auto_scores, evidence=("ev_a",))
+        again = self._attribute(auto_scores, evidence=("ev_a",))
+        assert self._assertion_id(first) == self._assertion_id(again)
+
+    def test_two_different_claims_under_one_candidate_id_no_longer_collide(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        """Two facts sharing a `candidate_id` used to mint one `assertion_id`.
+
+        Recorded as the open question on the ADR-0019 PR. The asserted object
+        is part of the record seed, so the collision is gone.
+        """
+        assert self._assertion_id(
+            self._attribute(auto_scores, evidence=("ev_a",), value=2015)
+        ) != self._assertion_id(
+            self._attribute(auto_scores, evidence=("ev_a",), value=2014)
+        )
+
+    def test_the_record_id_is_still_a_pure_function_of_the_candidate(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        """No clock: two plans built at different wall-clock moments agree.
+
+        `recorded_at` is deliberately outside the record seed, so a candidate
+        whose `created_at` differs still plans to the same record. Determinism
+        is what the injected `IdFactory` exists for; this pins that the wider
+        seed did not quietly reintroduce a time dependency.
+        """
+        from datetime import UTC, datetime
+
+        base = self._attribute(auto_scores, evidence=("ev_a",))
+        later = base.model_copy(update={"created_at": datetime(2030, 3, 4, tzinfo=UTC)})
+        assert self._assertion_id(base) == self._assertion_id(later)
