@@ -4,13 +4,15 @@ Update 2026-09-21 (#38 review — R22): **release-critical criterion MET** —
 identity rollback is genuinely demonstrated to the standard the downstream
 brief demands. Three narrow fixes landed on top.
 
-- **The epoch-scoped limb of the acceptance criterion was vacuous.** It
-  compared `len(...) == 8`; the epoch read is as-of, so `@1`/`@2`/`@999` all
-  return 8 and it could not fail in the direction it claimed — "counting when
-  identity matters", inside the very test proving the release property. Now
-  identity-keyed, plus a boundary assertion that the epoch *before* creation
-  returns nothing. A store mutant returning the right count with wrong
-  identities passes the old form and fails the new one.
+- **The epoch-scoped limb of the acceptance criterion asserts identities AND a
+  count — both, because each is blind to what the other catches.** It began as
+  a count alone (right number, could be the wrong eight records); replacing it
+  with an identity set alone then lost duplicate detection, since a set cannot
+  see duplicates. Mutants prove each direction: mangled identities → count
+  passes, set fails; every record returned twice → set passes, count fails
+  (`16 == 8`). A boundary assertion that the epoch *before* creation returns
+  nothing is what makes the epoch argument load-bearing; a far-future epoch
+  cannot catch it, because an epoch read is legitimately **as-of**.
 - **A second silent fallback in `_invert`, undisclosed until review**: a
   *malformed* `INVERSE_PAYLOAD_KEY` leaked lineage AND the sentinel key itself.
   Decision taken (owner-approved): the absent key now raises by default with an
@@ -25,11 +27,20 @@ Filed, not fixed: **#41** — `fully_compensable` means "a named inverse exists"
 not "rollback will work"; proposes a rename plus
 `executable_against(supported_operations)` so "consult both" is an API.
 
-**PROCESS: two agents share the `/mnt/c/code/agentic-kgcs` checkout, and HEAD
-moving under a reviewer has now invalidated measurements twice.** Work in a
-dedicated `git worktree` (detached, so the shared checkout's branch is never
-touched) and pin `kg_contracts` to a scratch clone. Never measure in the shared
-tree.
+**PROCESS — hard-won, three incidents:** several agents share
+`/mnt/c/code/agentic-kgcs`, and HEAD moving under a reader has invalidated
+measurements repeatedly; one reviewer's venv was also found pointing at another
+agent's editable `kg_contracts` clone. Rules that actually hold:
+1. Measure only in a **detached** `git worktree` (`--detach`), never in the
+   shared checkout, so no other agent's branch is disturbed.
+2. Install `kg_contracts` from a **private clone you own**, never a path
+   another agent writes to.
+3. Keep that private clone **editable**. Non-editable was tried here and
+   **silently defeated mutation testing**: uv installs a built wheel, so edits
+   to the dependency never reach the venv and a mutant reports as surviving
+   when it was never applied. Isolation comes from the path being private, not
+   from being non-editable. Always sanity-check that a mutation is visible to
+   the venv before trusting a "survived" result.
 
 Update 2026-09-21 (Defect 2 — the CREATE_IDENTITY inverse): **rollback of an
 identity-creation run is now demonstrated, not asserted (ADR-0020).** Branch

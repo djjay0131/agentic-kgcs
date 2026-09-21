@@ -791,6 +791,13 @@ class TestRollbackIsDemonstrated:
         )
         seen = store.find_entities(entity_type="TestEntity", options=at_creation)
         assert {e.identity_id for e in seen} == set(identity_ids)
+        # ...AND the count, which the set comparison cannot see. A set is blind
+        # to duplicates, so dropping the count in favour of identities traded
+        # one blind spot for another: `compensate.py` names duplicate rows under
+        # one id as a MEASURED defect in this repo, so the shape is real here
+        # even though `MemoryGraphStore` keys entities by dict and cannot
+        # produce it. Both assertions, not either.
+        assert len(seen) == self.RUN_SIZE
         assert all(e.status is CurationStatus.REVOKED for e in seen)
         assert {e.curation_epoch for e in seen} == {created_at_epoch}
 

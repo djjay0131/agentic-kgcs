@@ -133,16 +133,22 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   **exactly the 8 identities that were created**, and `include_superseded=True`
   `0` — the two history switches are independent.
 
-  That epoch-scoped limb asserts **identities, not a count**. It originally
-  compared `len(...) == 8`, which review showed to be decorative: the epoch read
-  is as-of (`record_epoch > epoch` hides), so `@1`, `@2` and `@999` all return 8
-  and the assertion could not fail in the direction it claimed — a "counting
-  when identity matters" defect sitting inside the very test that proves the
-  release-critical property. It now pins which records come back, plus a
-  companion assertion that the epoch *before* creation returns nothing, which is
-  what makes the epoch argument load-bearing. Measured against a store mutant
-  returning the right count with wrong identities: the old form passes, the new
-  form fails.
+  That epoch-scoped limb asserts **identities *and* a count** — both, because
+  each is blind to what the other catches. It originally compared
+  `len(...) == 8` alone, which review showed could not distinguish the right
+  eight records from eight wrong ones: against a store mutant returning the
+  right count with mangled identities, the count passes and the identity set
+  fails. Replacing it with the identity set alone then lost the opposite
+  property, because a set cannot see duplicates: against a mutant returning
+  every record twice, the identity set passes and the count fails (`16 == 8`).
+  Duplicate rows under one id are not hypothetical here — `compensate.py`
+  records them as a measured defect in this repo — so both assertions stay.
+
+  A companion assertion that the epoch *before* creation returns nothing is
+  what makes the epoch argument load-bearing at all. Note that an epoch read is
+  **as-of** (`record_epoch > epoch` hides), so `@1`, `@2` and `@999` legitimately
+  return the same eight records; the boundary below creation, not a far-future
+  epoch, is where this read can be caught ignoring its option.
 - A promotion plan from `recuration.evolution` is compensable for the same
   reason and by the same constructor.
 - The two repos cannot disagree about which type reverses which.
@@ -222,6 +228,18 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   checked a proxy, so it silently converted "the producer forgot" into "ship
   the lineage as the payload". Making it opt-in does not make it safer — it
   makes the caller state the precondition it is relying on.
+
+  **The fallback was also weakening tests that had nothing to do with it.** The
+  hand-built test helper's default `reversal_data` was the legacy shape, so
+  every test using it silently exercised the fallback. Measured: a mutant that
+  makes the *happy path* return the whole `reversal_data` reddens **17** tests
+  at this head, including all five parametrized
+  `test_compensable_types_map_to_their_inverse` cases — and **zero of those
+  five** before the helper was changed. Under the legacy default they could not
+  detect a payload-extraction defect at all, because the fallback returned the
+  whole dict, which happened to equal the payload they expected. Five tests were
+  passing for a weaker reason than their names implied; making the helper emit
+  the modern shape is a measured strengthening, not a refactor.
 
 - A sibling PR (ADR-0019) adds the first such read — `assertions_for` in
   `PlanExecutor._assertion_present`, with `include_superseded=True`. Whichever
