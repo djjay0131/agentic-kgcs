@@ -12,6 +12,7 @@ founding + contract decisions. Use `0000-template.md`.
 | [0018](0018-compensating-plans-assert-post-application-state.md) | A compensating plan asserts post-application state, and carries a payload a store can apply | Proposed |
 | [0019](0019-attach-assertion-absence-precondition.md) | `ATTACH_ASSERTION` carries an `assertion_absent` per-subject precondition | Proposed |
 | [0020](0020-kgcs-completes-the-create-identity-inverse.md) | KGCS completes the `CREATE_IDENTITY` inverse, and stops keeping its own inverse table | Proposed |
+| [0021](0021-fact-identity-and-record-identity-are-distinct.md) | A fact's identity and a record's identity are distinct; `assertion_id` is the record | Proposed |
 
 Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`
 and ten of those carry accepted decisions in place; reusing a candidate number

@@ -7,9 +7,12 @@ competing assertions preserved), traceability (every op carries trigger_id +
 evidence_ids + versions), idempotency (same trigger → same plan), and the
 motivating scenario end to end."""
 
+from datetime import UTC, datetime
+
+import pytest
 from kg_contracts.assertions import Assertion, ConflictStatus, CurationStatus
 from kg_contracts.curation import CurationOperationType, CurationPlan
-from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+from kg_contracts.evidence import EvidenceRef, EvidenceRelationship, Provenance
 from kg_contracts.identity import new_identity_id
 from kg_contracts.testing.factories import make_assertion, make_entity_candidate
 
@@ -18,6 +21,7 @@ from kgcs.executor.compensate import (
     INVERSE_PAYLOAD_KEY,
     Compensator,
 )
+from kgcs.records import assertion_fact_key
 from kgcs.recuration import (
     AssertionReassignment,
     ConceptEvolutionPlanner,
@@ -344,3 +348,219 @@ def test_new_evidence_scenario_targets_then_supersedes_preserving_history() -> N
     assert Compensator().compensate(result.plan, against_snapshot=1).fully_compensable is True
     for op in result.plan.operations:
         assert op.reversal_data["trigger_id"] == trigger.trigger_id
+
+
+# --- ADR-0021: supersession operates on RECORDS of a fact -------------------
+
+
+class TestSupersessionIsBetweenTwoRecords:
+    """`plan_supersession` enforces what it previously assumed.
+
+    Each refusal replaces a plan that executed `COMMITTED` and lost data.
+    """
+
+    def test_a_record_cannot_supersede_itself(self) -> None:
+        """The worst failure mode available: correct API, green result, the
+        fact silently gone from the live graph.
+
+        It is exactly what a re-assertion produced while `assertion_id` was a
+        function of the fact alone — old and new carried one id, so the plan
+        attached the record and then marked that same record SUPERSEDED.
+        """
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_same", subject=subject, evidence=("ev_old",))
+        new = _assertion("as_same", subject=subject, evidence=("ev_new",))
+        with pytest.raises(ValueError, match="cannot supersede itself"):
+            _planner().plan_supersession(old_assertion=old, new_assertion=new, trigger=_trigger())
+
+    def test_supersession_refuses_records_of_two_different_facts(self) -> None:
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_old", subject=subject, evidence=("ev_old",))
+        new = _assertion("as_new", subject=subject, evidence=("ev_new",)).model_copy(
+            update={"predicate": "a_different_predicate"}
+        )
+        with pytest.raises(ValueError, match="defined within one fact"):
+            _planner().plan_supersession(old_assertion=old, new_assertion=new, trigger=_trigger())
+
+    def test_supersession_refuses_a_record_that_is_already_superseded(self) -> None:
+        """Re-superseding rewrites `superseded_at` — history rewritten (§9 law
+        10). It is also the reachable half of the reference `mark_superseded`
+        defect, which does not skip rows it has already marked; KGCS refuses to
+        emit the operation rather than trust a store to refuse to apply it.
+        """
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_old", subject=subject, evidence=("ev_old",)).model_copy(
+            update={
+                "status": CurationStatus.SUPERSEDED,
+                "superseded_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+        )
+        new = _assertion("as_new", subject=subject, evidence=("ev_new",))
+        with pytest.raises(ValueError, match="already SUPERSEDED"):
+            _planner().plan_supersession(old_assertion=old, new_assertion=new, trigger=_trigger())
+
+    def test_two_distinct_records_of_one_fact_still_plan(self) -> None:
+        """The control: the guards refuse the three mistakes and nothing else."""
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_old", subject=subject, evidence=("ev_old",))
+        new = _assertion("as_new", subject=subject, evidence=("ev_new",))
+        result = _planner().plan_supersession(
+            old_assertion=old, new_assertion=new, trigger=_trigger()
+        )
+        assert result.plan is not None
+        assert [op.type for op in result.plan.operations] == [
+            CurationOperationType.ATTACH_ASSERTION,
+            CurationOperationType.RETRACT_ASSERTION,
+        ]
+
+
+class TestNextRecord:
+    """The minting API a re-assertion needs: a new record of the SAME fact."""
+
+    @staticmethod
+    def _prior(subject: str) -> Assertion:
+        return _assertion("as_prior", subject=subject, evidence=("ev_a",)).model_copy(
+            update={"recorded_at": datetime(2026, 1, 1, tzinfo=UTC)}
+        )
+
+    def test_new_evidence_yields_a_new_record_id_for_the_same_fact(self) -> None:
+        subject = new_identity_id(GRAPH)
+        prior = self._prior(subject)
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(
+                EvidenceRef(evidence_id="ev_b", relationship=EvidenceRelationship.SUPPORTS),
+            ),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+        assert successor.assertion_id != prior.assertion_id
+        assert assertion_fact_key(successor) == assertion_fact_key(prior)
+        assert [r.evidence_id for r in successor.evidence_refs] == ["ev_b"]
+
+    def test_the_successor_is_a_live_record_with_no_supersession_stamp(self) -> None:
+        subject = new_identity_id(GRAPH)
+        prior = self._prior(subject).model_copy(
+            update={
+                "status": CurationStatus.SUPERSEDED,
+                "superseded_at": datetime(2026, 2, 2, tzinfo=UTC),
+                "curation_epoch": 7,
+            }
+        )
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(
+                EvidenceRef(evidence_id="ev_b", relationship=EvidenceRelationship.SUPPORTS),
+            ),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+        assert successor.status is CurationStatus.ACTIVE
+        assert successor.superseded_at is None
+        assert successor.curation_epoch == 0  # the executor stamps the real one
+
+    def test_a_replay_is_refused_rather_than_duplicated(self) -> None:
+        """Same object, same valid period, same evidence in the same order is
+        a replay. Minting a second id for it would put two identical records of
+        one fact in the graph — the duplicate this whole change exists to
+        avoid, arriving through the fix's own front door."""
+        subject = new_identity_id(GRAPH)
+        prior = self._prior(subject)
+        with pytest.raises(ValueError, match="nothing record-distinguishing"):
+            _planner().next_record(
+                prior,
+                evidence_refs=prior.evidence_refs,
+                recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+            )
+
+    def test_a_corrected_object_is_a_new_record_even_on_the_same_evidence(self) -> None:
+        subject = new_identity_id(GRAPH)
+        prior = self._prior(subject)
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=prior.evidence_refs,
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+            object_value=1999,
+        )
+        assert successor.assertion_id != prior.assertion_id
+        assert successor.object_value == 1999
+
+    def test_the_successor_supersedes_the_prior_record(self) -> None:
+        """End of the loop: what `next_record` mints is what
+        `plan_supersession` accepts."""
+        subject = new_identity_id(GRAPH)
+        prior = self._prior(subject)
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(
+                EvidenceRef(evidence_id="ev_b", relationship=EvidenceRelationship.SUPPORTS),
+            ),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+        result = _planner().plan_supersession(
+            old_assertion=prior, new_assertion=successor, trigger=_trigger()
+        )
+        assert result.plan is not None
+        retract = result.plan.operations[1]
+        assert retract.payload["assertion_id"] == prior.assertion_id
+        assert retract.payload["superseded_by"] == successor.assertion_id
+
+
+class TestNextRecordRePointsTheOrigin:
+    """ADR-0021 as revised: the re-curation analogue of the B1 gap.
+
+    A caller holding a committed record and a *second source* for the same
+    fact — with no evidence refs to offer, because its producer keeps evidence
+    in a side registry — must still be able to mint a successor.
+    """
+
+    @staticmethod
+    def _prior(subject: str) -> Assertion:
+        return _assertion("as_prior", subject=subject).model_copy(
+            update={
+                "evidence_refs": (),
+                "authority": "producer_alpha",
+                "provenance": Provenance(
+                    source="csv", source_ref="s3://a.csv", actor="producer_alpha"
+                ),
+                "recorded_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+        )
+
+    def test_a_new_origin_alone_mints_a_new_record_of_the_same_fact(self) -> None:
+        prior = self._prior(new_identity_id(GRAPH))
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+            provenance=Provenance(
+                source="csv", source_ref="s3://b.csv", actor="producer_beta"
+            ),
+            authority="producer_beta",
+        )
+        assert successor.assertion_id != prior.assertion_id
+        assert assertion_fact_key(successor) == assertion_fact_key(prior)
+        assert successor.provenance.source_ref == "s3://b.csv"
+        assert successor.authority == "producer_beta"
+
+    def test_the_prior_origin_is_kept_when_none_is_supplied(self) -> None:
+        prior = self._prior(new_identity_id(GRAPH))
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(
+                EvidenceRef(evidence_id="ev_b", relationship=EvidenceRelationship.SUPPORTS),
+            ),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+        assert successor.provenance == prior.provenance
+        assert successor.authority == prior.authority
+
+    def test_the_same_origin_and_the_same_evidence_is_still_a_replay(self) -> None:
+        """The refusal must not be weakened by the new parameter: re-stating
+        the origin the record already has changes nothing."""
+        prior = self._prior(new_identity_id(GRAPH))
+        with pytest.raises(ValueError, match="nothing record-distinguishing"):
+            _planner().next_record(
+                prior,
+                evidence_refs=(),
+                recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+                provenance=prior.provenance,
+            )

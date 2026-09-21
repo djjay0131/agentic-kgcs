@@ -298,16 +298,24 @@ class TestAttachReplay:
             str(plan_b.operations[0].payload["assertion_id"])
         ]
 
-    def test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence(
+    def test_reassertion_under_the_same_candidate_id_lands_as_a_new_record(
         self, auto_scores: CandidateScores, clock: FixedClock
     ) -> None:
-        # The caller contract, as an executing fact rather than a sentence in
-        # an ADR. `agentic-kg` mints candidate_id from
-        # (graph_id, kind, semantic_key) with evidence NOT an input, so for it
-        # "the same fact with new evidence" is the SAME candidate id. That is
-        # refused, and the new evidence does not land. Loudly — a named failed
-        # precondition, not a silent drop — but a producer that wants evidence
-        # evolution must mint a new candidate id for it.
+        # ADR-0021 REPLACED the behaviour this test used to pin. It asserted
+        # that a re-assertion under one candidate id is refused and "the new
+        # evidence does not land" — an honest description of ADR-0019's limit
+        # at the time, and the open question ADR-0019 asked the owner to rule
+        # on. The ruling went the other way: `assertion_id` is now a RECORD id
+        # minted from the record's own content, so `agentic-kg`'s
+        # evidence-independent candidate id no longer forces two records of one
+        # fact to collide.
+        #
+        # The guard is not weakened by that — it is what makes it able to tell
+        # the two cases apart, and both halves are pinned here:
+        #   * new evidence  -> a new record id -> `assertion_absent` passes ->
+        #     it LANDS, as a second record, with the first one intact;
+        #   * same evidence -> the same record id -> still refused (the test
+        #     below, `..._replayed_verbatim_is_still_refused`).
         subject = known_identity()
         first = make_attribute_candidate(
             graph_id=GRAPH_ID, subject=subject, scores=auto_scores
@@ -333,21 +341,66 @@ class TestAttachReplay:
 
         store = MemoryGraphStore()
         executor = PlanExecutor(store, clock=clock)
-        assert (
-            executor.execute(self._attach_plan_at(clock, first, "0")).outcome
-            is ExecutionOutcome.COMMITTED
+        first_plan = self._attach_plan_at(clock, first, "0")
+        assert executor.execute(first_plan).outcome is ExecutionOutcome.COMMITTED
+        first_id = str(first_plan.operations[0].payload["assertion_id"])
+
+        enriched_plan = self._attach_plan_at(clock, enriched, str(store.current_epoch()))
+        enriched_id = str(enriched_plan.operations[0].payload["assertion_id"])
+        # The causal chain, asserted rather than assumed: ONE candidate id, TWO
+        # record ids, and it is the second one the guard is given to check.
+        assert enriched_id != first_id
+        assert any(
+            p.kind == "assertion_absent" and p.expected == enriched_id
+            for p in enriched_plan.preconditions
         )
-        record = executor.execute(
-            self._attach_plan_at(clock, enriched, str(store.current_epoch()))
+        record = executor.execute(enriched_plan)
+
+        assert record.outcome is ExecutionOutcome.COMMITTED
+        assert record.failed_preconditions == ()
+        # BY IDENTITY, not by counting: two records of one fact, and the first
+        # one still cites only what it was asserted on. A count of 2 would pass
+        # equally if the second row had overwritten the first.
+        rows = {
+            a.assertion_id: [r.evidence_id for r in a.evidence_refs]
+            for a in store.assertions_for(subject, GraphReadOptions(include_superseded=True))
+        }
+        assert set(rows) == {first_id, enriched_id}
+        assert rows[first_id] == ["ev_1"]
+        assert rows[enriched_id] == ["ev_1", "ev_2"]
+
+    def test_a_reassertion_replayed_verbatim_is_still_refused(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # The other half of the pair above, and the reason ADR-0021's record
+        # seed is deliberately clock-free: a candidate replayed with NOTHING
+        # changed mints the SAME record id, so `assertion_absent` still refuses
+        # it. Without this the change above would have traded a loud refusal of
+        # new knowledge for a silent duplication of old knowledge.
+        candidate = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=known_identity(), scores=auto_scores
+        ).model_copy(
+            update={
+                "evidence_refs": (
+                    EvidenceRef(evidence_id="ev_1", relationship=EvidenceRelationship.SUPPORTS),
+                )
+            }
         )
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+        first = self._attach_plan_at(clock, candidate, "0")
+        assert executor.execute(first).outcome is ExecutionOutcome.COMMITTED
+        assertion_id = str(first.operations[0].payload["assertion_id"])
+
+        replay = self._attach_plan_at(clock, candidate, str(store.current_epoch()))
+        assert str(replay.operations[0].payload["assertion_id"]) == assertion_id
+        record = executor.execute(replay)
 
         assert record.outcome is ExecutionOutcome.STALE
         assert any(p.kind == "assertion_absent" for p in record.failed_preconditions)
-        # The refusal is the whole point, and so is its cost: ev_2 never lands.
-        in_graph = {
-            ref.evidence_id for a in store.assertions_for(subject) for ref in a.evidence_refs
-        }
-        assert in_graph == {"ev_1"}
+        subject = str(first.operations[0].payload["subject_identity"])
+        visible = store.assertions_for(subject, GraphReadOptions(include_superseded=True))
+        assert [a.assertion_id for a in visible] == [assertion_id]
 
     def test_a_plan_that_mints_one_assertion_id_twice_is_refused_as_error(
         self, auto_scores: CandidateScores, clock: FixedClock
@@ -356,17 +409,29 @@ class TestAttachReplay:
         # minting one assertion_id INSIDE one plan both saw "absent" and both
         # landed — two rows under one id, the exact corruption the guard
         # exists to prevent, reached from inside a single plan.
+        #
+        # The CONSTRUCTION changed with ADR-0021; the guard did not. This test
+        # used to force two *different* facts (height_cm=200, width_cm=300)
+        # under one `candidate_id`, which collided while `assertion_id` was a
+        # function of `candidate_id` alone. It no longer does — the seed now
+        # reads the asserted object, which is precisely the collision ADR-0021
+        # set out to remove. The guard stays reachable through the case that
+        # genuinely mints one record twice: two candidates whose *record
+        # content* is identical — same subject, predicate, object, valid
+        # period, origin and evidence — which is one record proposed twice, not
+        # two facts.
         subject = known_identity()
         one = make_attribute_candidate(
             graph_id=GRAPH_ID, subject=subject, attribute="height_cm", value=200,
             scores=auto_scores,
         )
-        # A second, DIFFERENT fact forced under the same candidate id — what an
-        # evidence-independent or colliding id scheme can produce.
         two = make_attribute_candidate(
-            graph_id=GRAPH_ID, subject=subject, attribute="width_cm", value=300,
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", value=200,
             scores=auto_scores,
-        ).model_copy(update={"candidate_id": one.candidate_id})
+        )
+        # Non-vacuity of the construction itself: DIFFERENT candidate ids, so
+        # the collision comes from the record content and not from a forced id.
+        assert one.candidate_id != two.candidate_id
 
         engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
         plan = engine.curate([one, two]).plan
@@ -457,10 +522,15 @@ class TestAttachReplay:
         # record; a RETRACT names one that already exists.
         #
         # This asserts only that THIS check does not fire. Whether such a plan
-        # should be refused at all is a separate question with a separate
-        # answer: issue #40, where `plan_supersession` emitting a same-id
-        # supersession destroys the fact. Refusing it here would be the right
-        # outcome for the wrong reason, and would mask that defect.
+        # should be refused at all was a separate question with a separate
+        # answer — issue #40, where `plan_supersession` emitting a same-id
+        # supersession destroys the fact — and refusing it here would have been
+        # the right outcome for the wrong reason, masking that defect.
+        # ADR-0021 has since closed #40 at its source: `plan_supersession`
+        # raises on a record superseding itself, and a re-assertion mints a
+        # distinct record id, so the same-id supersession is no longer
+        # constructible through the API. This check still must not fire, for
+        # the original reason: only an ATTACH *mints* a record.
         engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
         source = engine.curate(
             [make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)]
@@ -519,16 +589,25 @@ class TestAttachReplay:
         # Unlike the snapshot and absence guards, this one is a property of the
         # plan alone, so it still holds over a write-only store — the one place
         # the other two are unenforceable.
+        #
+        # Same construction change as the test above (ADR-0021): two candidates
+        # with identical record content, rather than two different facts forced
+        # under one candidate id.
         subject = known_identity()
         one = make_attribute_candidate(
             graph_id=GRAPH_ID, subject=subject, attribute="height_cm", scores=auto_scores
         )
         two = make_attribute_candidate(
-            graph_id=GRAPH_ID, subject=subject, attribute="width_cm", scores=auto_scores
-        ).model_copy(update={"candidate_id": one.candidate_id})
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", scores=auto_scores
+        )
+        assert one.candidate_id != two.candidate_id
         engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
         plan = engine.curate([one, two]).plan
         assert plan is not None
+        # Non-vacuity: the plan really does mint one record id twice, so the
+        # ERROR below cannot come from anywhere else.
+        minted = [str(op.payload["assertion_id"]) for op in plan.operations]
+        assert len(minted) == 2 and len(set(minted)) == 1
 
         store = _WriteOnlyStore()
         record = PlanExecutor(store, clock=clock).execute(plan)

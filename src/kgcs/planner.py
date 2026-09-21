@@ -63,6 +63,7 @@ from kg_contracts.policy import AdjudicationRoute
 
 from kgcs.ids import DerivedIdFactory, IdFactory
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
+from kgcs.records import fact_key, record_seed
 
 SNAPSHOT_PRECONDITION_KIND = "snapshot_version"
 ENTITY_VERSION_PRECONDITION_KIND = "entity_version"
@@ -311,9 +312,41 @@ class CurationPlanner:
         has no separate authority model — see the ADR candidate on authority
         provenance). `assertion_id` is pinned via the `IdFactory` so the plan
         is fully deterministic rather than defaulting to a random ULID.
+
+        `assertion_id` is a **record** id, not a fact id (ADR-0021). It is
+        minted from `records.record_seed` over the fact this candidate asserts
+        — `fact_key(subject, predicate)` — plus the record-distinguishing
+        content: the asserted object, the valid period, the **origin**, and
+        the cited evidence. It was `f"{candidate.candidate_id}:assertion"`,
+        which made the record id a pure function of the *fact* id, so the same
+        fact re-asserted with new evidence could not mint a second record and
+        the three routes to evidence evolution all lost data (module
+        `kgcs.records`). Still clock-free and still a pure function of the
+        candidate, so an identical candidate replays to an identical plan.
+
+        The `Provenance` is built **before** the assertion and fed to both the
+        seed and the record, deliberately: the seed must read exactly the two
+        fields the row will store (`source`, `source_ref`), or
+        `assertion_record_seed` over a committed row would not reproduce the
+        id the planner minted, and the ADR-0021 migration backfill rests on
+        that round trip being exact.
         """
+        provenance = Provenance(
+            source=candidate.source_coordinates.source_type,
+            source_ref=candidate.source_coordinates.locator,
+            actor=candidate.producer,
+        )
         return Assertion(
-            assertion_id=self._ids.assertion_id(f"{candidate.candidate_id}:assertion"),
+            assertion_id=self._ids.assertion_id(
+                record_seed(
+                    fact_id=fact_key(subject_identity, predicate),
+                    object_value=object_value,
+                    object_identity=object_identity,
+                    valid_period=valid_period,
+                    evidence_refs=candidate.evidence_refs,
+                    provenance=provenance,
+                )
+            ),
             subject_identity=subject_identity,
             predicate=predicate,
             object_value=object_value,
@@ -325,11 +358,7 @@ class CurationPlanner:
             scores=candidate.scores,
             evidence_refs=candidate.evidence_refs,
             authority=candidate.producer,
-            provenance=Provenance(
-                source=candidate.source_coordinates.source_type,
-                source_ref=candidate.source_coordinates.locator,
-                actor=candidate.producer,
-            ),
+            provenance=provenance,
             derivation=None,
             curation_epoch=0,
             trace_id=candidate.trace_id,

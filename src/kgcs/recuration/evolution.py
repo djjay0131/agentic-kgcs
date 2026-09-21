@@ -50,7 +50,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
+from typing import Any, Final
 
 from kg_contracts.assertions import (
     Assertion,
@@ -66,6 +68,7 @@ from kg_contracts.curation import (
     CurationPlan,
     Precondition,
 )
+from kg_contracts.evidence import EvidenceRef, Provenance, ValidPeriod
 
 from kgcs.er.cluster import select_survivor
 from kgcs.er.normalize import NormalizedEntity
@@ -78,11 +81,18 @@ from kgcs.planner import (
     revoke_inverse_payload,
 )
 from kgcs.policy import DEFAULT_SNAPSHOT_VERSION
+from kgcs.records import assertion_fact_key, assertion_record_seed
 from kgcs.recuration.triggers import (
     CurationTrigger,
     merge_evidence,
     trigger_provenance,
 )
+
+#: Sentinel for "keep the prior record's value" on `next_record`. `None` is a
+#: legitimate value for both object fields (exactly one of them is set on any
+#: assertion), so a `None` default could not distinguish "leave it alone" from
+#: "clear it" — and clearing the wrong one produces an invalid `Assertion`.
+_UNCHANGED: Final[Any] = object()
 
 
 class EvolutionKind(StrEnum):
@@ -361,6 +371,83 @@ class ConceptEvolutionPlanner:
 
     # -- supersession --------------------------------------------------------
 
+    def next_record(
+        self,
+        prior: Assertion,
+        *,
+        evidence_refs: Sequence[EvidenceRef],
+        recorded_at: datetime,
+        object_value: object | None = _UNCHANGED,
+        object_identity: str | None = _UNCHANGED,
+        valid_period: ValidPeriod | None = None,
+        provenance: Provenance | None = None,
+        authority: str | None = None,
+        trace_id: str | None = None,
+    ) -> Assertion:
+        """The **next record of the same fact** as `prior`, with a fresh id.
+
+        This is the missing piece evidence evolution needed (ADR-0021). A
+        caller re-asserting a known fact with new evidence had no way to mint
+        a distinct `assertion_id`: the planner derived it from the fact alone,
+        so the successor collided with its own predecessor and
+        `plan_supersession` superseded the record it had just attached.
+
+        The returned `Assertion` keeps everything that makes it the *same
+        fact* — subject, predicate, and (unless overridden) the asserted object
+        — and takes a new **record** identity minted from its own
+        record-distinguishing content. It is `ACTIVE` with `superseded_at`
+        cleared and `curation_epoch=0` (the executor stamps the real epoch at
+        apply time, exactly as a planned assertion does).
+
+        `provenance` re-points the successor at a **different origin** — the
+        second source of a fact whose producer leaves `evidence_refs` empty.
+        It is record-distinguishing (ADR-0021), so supplying it alone is
+        enough to mint a successor; `authority` travels with it because the
+        two answer the same question and a record whose origin moved while its
+        authority did not is a record that lies about who is asserting it.
+        Neither is in the seed's *processor* half — see `kgcs.records`.
+
+        Raises `ValueError` if nothing record-distinguishing actually changed:
+        same object, same valid period, same origin, same evidence in the same
+        order is a **replay**, not new knowledge, and minting a second id for
+        it would put two identical records of one fact in the graph. That
+        refusal is the point — it is the boundary between corroboration with
+        new evidence and a duplicate.
+        """
+        successor = prior.model_copy(
+            update={
+                "object_value": (
+                    prior.object_value if object_value is _UNCHANGED else object_value
+                ),
+                "object_identity": (
+                    prior.object_identity
+                    if object_identity is _UNCHANGED
+                    else object_identity
+                ),
+                "valid_period": (
+                    prior.valid_period if valid_period is None else valid_period
+                ),
+                "evidence_refs": tuple(evidence_refs),
+                "provenance": prior.provenance if provenance is None else provenance,
+                "authority": prior.authority if authority is None else authority,
+                "recorded_at": recorded_at,
+                "status": CurationStatus.ACTIVE,
+                "superseded_at": None,
+                "curation_epoch": 0,
+                "trace_id": prior.trace_id if trace_id is None else trace_id,
+            }
+        )
+        if assertion_record_seed(successor) == assertion_record_seed(prior):
+            raise ValueError(
+                "next_record was given nothing record-distinguishing: the successor "
+                f"of {prior.assertion_id!r} would carry the same object, valid period "
+                "and evidence, which is a replay of that record rather than a new "
+                "one. Cite new evidence, or assert a different object/valid period."
+            )
+        return successor.model_copy(
+            update={"assertion_id": self._ids.assertion_id(assertion_record_seed(successor))}
+        )
+
     def plan_supersession(
         self,
         *,
@@ -377,7 +464,33 @@ class ConceptEvolutionPlanner:
         10). Both ops are compensable (`ATTACH↔RETRACT`). The returned
         `superseded_assertions` carries the marked-old copy so a caller can
         confirm it is preserved, not gone.
+
+        Three caller obligations are **enforced**, not assumed (ADR-0021).
+        Each one was silently satisfiable before and each destroyed data:
+
+        - **A record may not supersede itself.** When `old` and `new` share an
+          `assertion_id` the emitted plan attaches the record and then marks
+          *that same id* `SUPERSEDED`, so the fact vanishes from the live
+          graph while the execution reports `COMMITTED` — the correct API, a
+          green result, and silent data loss. That is precisely what happened
+          when a re-assertion could not mint a new record id. Build the
+          successor with `next_record()` rather than reusing the id.
+        - **Both records must be records of the same fact.** Supersession is
+          defined *within* a fact (`records.fact_key`): retiring a record of
+          one slot in favour of a claim about a different slot is not a
+          supersession, it is two unrelated writes, and the emitted plan would
+          leave the first slot's history claiming a successor it never had.
+        - **The superseded record must still be `ACTIVE`.** Marking an already
+          `SUPERSEDED` record superseded again rewrites its `superseded_at` —
+          history rewritten, §9 law 10 broken. It is also the reachable half
+          of the reference `mark_superseded` defect (it does not skip rows it
+          already marked); KGCS refuses to emit the operation rather than rely
+          on a store to refuse to apply it.
+
+        All three raise `ValueError`. A refusal is loud and recoverable; the
+        behaviour it replaces was a committed plan that lost the fact.
         """
+        self._check_supersedes(old_assertion, new_assertion)
         superseded_old = old_assertion.model_copy(
             update={
                 "status": CurationStatus.SUPERSEDED,
@@ -467,6 +580,42 @@ class ConceptEvolutionPlanner:
         )
 
     # -- shared construction -------------------------------------------------
+
+    @staticmethod
+    def _check_supersedes(old_assertion: Assertion, new_assertion: Assertion) -> None:
+        """Refuse a supersession that cannot mean what it says (ADR-0021).
+
+        Stated as three separate refusals with three separate messages: they
+        are three different caller mistakes, and collapsing them into one
+        "invalid supersession" would tell the caller nothing about which.
+        """
+        if old_assertion.assertion_id == new_assertion.assertion_id:
+            raise ValueError(
+                "a record cannot supersede itself: old_assertion and new_assertion "
+                f"share assertion_id {old_assertion.assertion_id!r}. The emitted plan "
+                "would attach that record and then mark it SUPERSEDED, removing the "
+                "fact from the live graph while reporting COMMITTED. Mint the "
+                "successor's record id with ConceptEvolutionPlanner.next_record()."
+            )
+        old_fact = assertion_fact_key(old_assertion)
+        new_fact = assertion_fact_key(new_assertion)
+        if old_fact != new_fact:
+            raise ValueError(
+                "supersession is defined within one fact: "
+                f"{old_assertion.assertion_id!r} asserts "
+                f"({old_assertion.subject_identity}, {old_assertion.predicate}) and "
+                f"{new_assertion.assertion_id!r} asserts "
+                f"({new_assertion.subject_identity}, {new_assertion.predicate}); "
+                f"fact keys {old_fact} != {new_fact}. Two unrelated claims are a "
+                "corroboration, a conflict, or two plain attaches — not a supersession."
+            )
+        if old_assertion.status is not CurationStatus.ACTIVE:
+            raise ValueError(
+                f"{old_assertion.assertion_id!r} is already "
+                f"{old_assertion.status.value}, so superseding it again would rewrite "
+                "its superseded_at and with it the record of when it was retired "
+                "(§9 law 10). Supersede the record that is currently ACTIVE."
+            )
 
     def _attach(self, trigger: CurationTrigger, assertion: Assertion) -> CurationOperation:
         """An `ATTACH_ASSERTION` for `assertion` with trace-linked reversal data."""

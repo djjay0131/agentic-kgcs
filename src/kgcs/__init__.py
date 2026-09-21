@@ -160,6 +160,12 @@ from kgcs.profiles import (
     default_registry,
     projection_consumer_profile,
 )
+from kgcs.records import (
+    assertion_fact_key,
+    assertion_record_seed,
+    fact_key,
+    record_seed,
+)
 from kgcs.recuration import (
     AssertionReassignment,
     ConceptEvolutionPlanner,
@@ -242,6 +248,11 @@ __all__ = [
     "PlanResult",
     "PlannedOperation",
     "ResolvedCandidate",
+    # fact identity vs record identity (ADR-0021)
+    "fact_key",
+    "assertion_fact_key",
+    "record_seed",
+    "assertion_record_seed",
     "AuditRecorder",
     "AuditSink",
     # determinism primitives

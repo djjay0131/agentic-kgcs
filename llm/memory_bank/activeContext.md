@@ -1,5 +1,79 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (post-v1 defect fix, **DESIGN PROPOSAL awaiting owner
+acceptance**): **ADR-0021 — a fact's identity and a record's identity are
+distinct; `assertion_id` is the record.** Branch
+`fix/record-identity-for-evidence-evolution`, opened after the `agentic-kg`
+adopter's release-critical evidence-evolution criterion could not be met.
+
+The defect: `assertion_id = f(candidate_id)`, and the adopter's `candidate_id`
+is `(graph_id, candidate_kind, semantic_key)` with evidence deliberately
+excluded. So the model could not hold two records of one fact — which is what
+supersession is. Three routes measured on `main` @ `14ffd0e`: `snapshot="0"`
+→ `STALE`, the evidence never lands; live epoch → `COMMITTED` by in-place
+overwrite, the prior record's evidence gone; **`plan_supersession` — the
+designed path — → `COMMITTED` and the fact DISAPPEARS, because it supersedes
+itself.** Correct API, green result, silent data loss.
+
+The evidence-free candidate identity is **correct** and is not the bug: the
+same fact from two sources is corroboration, not two facts. The fix separates
+the two jobs one identifier was doing. New module `kgcs.records`: `fact_key`
+(derived, `(subject_identity, predicate)`) is the fact; `record_seed`
+(object + valid period + evidence, **no clock**) is the record.
+`CurationPlanner` mints `assertion_id` from the record seed;
+`ConceptEvolutionPlanner.next_record()` mints a successor on the re-curation
+path; `plan_supersession` now refuses self-supersession, cross-fact
+supersession, and superseding an already-`SUPERSEDED` record.
+
+Demonstrated, not asserted: `tests/kgcs/test_e2e_evidence_evolution.py` runs
+the round trip and reads it back by identity — both records present, the live
+read showing the latest, the prior reachable with `include_superseded=True`
+still citing its own evidence.
+
+**Revision 2 (after independent adversarial review R21, REQUEST CHANGES).**
+Two blockers, both closed in code and in the ADR rather than by softening the
+prose:
+
+- **B1** — the first draft keyed the record on evidence alone and therefore
+  **did not reach the structured/tabular producer at all**: KGIS links
+  structured evidence into a side registry and never populates
+  `Candidate.evidence_refs`, so the seed's evidence component was a constant
+  `[]` there and route 2's overwrite survived on the release-critical
+  criterion. The seed now also reads the **origin**
+  (`provenance.source`/`source_ref`) — the same key
+  `kgis.structured.evidence.source_evidence_id` uses — while the *processor*
+  (`actor`/`model`/`prompt_version`/`authority`) stays out. Fixes the
+  traceability regression with it.
+- **B2** — the rejection of the zero-migration Alternative 2 rested on five
+  "frozen contract" sites of which only **two** are real (`superseded_by` does
+  not exist in `kg_contracts` at all). Rewritten honestly, resting on
+  `testing/contract.py`'s 21 references and the per-adapter version-chain cost.
+
+Migration is now a **stated procedure**: `records.backfill_record_id()`
+recomputes the new id from the committed row, so it is one offline pass —
+with the non-injectivity (merge, never rename) and the reference rewriting
+both stated and pinned. Also fixed: a `default=str` determinism hazard in the
+seed (now refuses an unrenderable `object_value`), and two producer
+obligations are now stated rather than assumed.
+
+**Revision 3.** #38 and #36 both merged; this branch is rebased onto
+`main` and **carries the rewrite of the three ADR-0019 tests** its record seed
+invalidated — two of them only in their *construction* (ADR-0019's F1 guard
+stays reachable and is re-pointed at two candidates with identical record
+content), one in its *meaning* (a re-assertion now lands as a new record, and
+is paired with a new test pinning that a verbatim replay is still refused).
+Zero tests removed: 459 → 511 distinct names.
+
+Also in revision 3: `include_snapshot_in_locator=False` is stated as a
+**deployment prerequisite**, not a mitigation — measured, 30 daily re-syncs of
+one unchanged row produce 30 `ACTIVE` records under KGIS's default, 1 with the
+flag off, while two genuine sources still separate. And ADR-0021
+§Alternative 2 now leads with the argument that actually decides it: a record
+identity that is a **value** is checkable by anyone holding the row, whereas
+the alternative moves correctness out of one pure function into N adapters.
+
+
+
 Update 2026-09-21 (PR #36 re-review — two defects found INSIDE the fixes):
 both original blockers confirmed closed, and re-review found two new ones in
 the fixes themselves, both reproduced here before being fixed.
