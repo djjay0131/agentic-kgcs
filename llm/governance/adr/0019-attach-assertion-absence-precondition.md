@@ -121,17 +121,50 @@ that shape: first attach `COMMITTED`; re-assert with `ev_2` added →
 `STALE (assertion_absent)`; evidence in the graph afterwards `['ev_1']`.
 
 **The caller contract, stated plainly:** an `assertion_absent` guard keys on
-`assertion_id`, which derives from `candidate_id`. A producer that wants a
-re-assertion carrying new evidence to land must mint a new `candidate_id` for
-it. A producer whose candidate ids are evidence-independent will see the
-re-assertion refused, loudly — a named failed precondition, never a silent
-drop — and must either widen its id seed or route the new evidence through
-supersession (`recuration.evolution`) rather than a fresh attach.
+`assertion_id`, which derives from `candidate_id`. A producer whose candidate
+ids are evidence-independent will see such a re-assertion refused, loudly — a
+named failed precondition, never a silent drop.
 
 Before this ADR that same shape duplicated the row *and* the new evidence
 became visible; after it, the row is not duplicated and the evidence does not
 land. That is a deliberate trade of silent corruption for a loud refusal, and
-both halves of it are pinned by tests. Evidence
+both halves of it are pinned by tests.
+
+**This ADR prescribes no workaround, because it has none that works.** An
+earlier revision told such a producer to widen its id seed or to route the new
+evidence through supersession. Both were wrong, and the second was dangerous:
+
+- **Routing through `recuration.evolution.plan_supersession` destroys the
+  fact.** That method emits `ATTACH(new)` then `RETRACT(old.assertion_id)`;
+  when the producer's ids are evidence-independent those are the *same* id, so
+  the plan attaches a record and immediately retracts it. Executed against an
+  adapter that applies `RETRACT_ASSERTION`:
+
+  ```
+  old.assertion_id == new.assertion_id: True
+  live before : [(as_EVIDENCEI…, ACTIVE, ['ev_A'])]
+  ops         : ['ATTACH_ASSERTION', 'RETRACT_ASSERTION']
+  OUTCOME     : COMMITTED
+  live after  : []                                      <- the fact is gone
+  history     : [(as_EVIDENCEI…, SUPERSEDED, ['ev_B'])] <- ev_A cited nowhere
+  ```
+
+  A green result, a correct-looking API call, and silent data loss. Sending an
+  adopter down that path would have been worse than the defect this ADR fixes.
+  (Tracked as issue #40 — `plan_supersession` should refuse a same-id
+  supersession rather than execute it.)
+- **Folding evidence into `candidate_id` corrupts corroboration.** The same
+  fact arriving from two sources is corroboration, not two facts; making
+  evidence part of candidate identity turns every corroboration into a
+  duplicate and breaks ledger replay idempotency.
+
+So the honest statement is: **there is no currently-supported path for an
+evidence-independent producer to land a re-assertion carrying new evidence.**
+The refusal is correct — it is the corruption-preventing behaviour — but the
+producer's need is real and unmet. Making it land requires a distinct
+`assertion_id` for the new record, which this ADR does not provide. Splitting
+fact identity from record identity is the proposed fix, in PR #39; this ADR's
+guard is orthogonal to it and holds unchanged under it. Evidence
 evolution is a release-critical adopter acceptance criterion; a guard that
 foreclosed it would be a worse defect than the one being fixed.
 
@@ -201,9 +234,19 @@ evolution case, and they must both land.
   applied, which is the right moment to ask "is this record already in the
   graph?" and the wrong moment to catch a plan whose *own* second operation is
   what creates the duplicate. At check time the record is genuinely absent,
-  both guards pass, and both attaches land. The self-conflict check is a
-  property of the plan alone, so unlike the other two guards it needs no
-  `GraphReader` and holds even over a write-only store.
+  both guards pass, and both attaches land.
+
+  The check counts **`plan.operations`**, not `plan.preconditions`. That
+  distinction is load-bearing and was got wrong first: counting duplicate
+  `expected` values among `assertion_absent` preconditions protects only plans
+  that already carry such guards, and misses every plan that does not —
+  including the ones `kgcs.recuration.evolution` and
+  `kgcs.recuration.ontology` emit, since both attach a single
+  `snapshot_version` guard and nothing else. Those committed the duplicate
+  exactly as if the check did not exist. The operations are what the store
+  will apply; the preconditions are a derived claim *about* them that a
+  producer may simply not make. Being a property of the plan alone, the check
+  still needs no `GraphReader` and holds even over a write-only store.
 
 ### Negative / Tradeoffs
 

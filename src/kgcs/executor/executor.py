@@ -93,6 +93,7 @@ from kgcs.ids import DerivedIdFactory, IdFactory
 from kgcs.planner import (
     ASSERTION_ABSENT_PRECONDITION_KIND,
     SNAPSHOT_PRECONDITION_KIND,
+    assertion_absent_guard,
     read_assertion_absent_guard,
 )
 
@@ -421,7 +422,7 @@ class PlanExecutor:
 
     @staticmethod
     def _self_conflicting_guards(plan: CurationPlan) -> tuple[Precondition, ...]:
-        """`assertion_absent` guards a plan cannot satisfy against *itself*.
+        """Guards a plan cannot satisfy against *itself*, read from its operations.
 
         The graph-state guards above are evaluated once, before the batch is
         applied. That is the right time to ask "is this record already in the
@@ -432,24 +433,50 @@ class PlanExecutor:
         ADR-0019 exists to prevent, reached from inside a single plan instead
         of across two.
 
-        It is a property of the plan alone, so it needs no reader and is
-        checked even for a write-only store. Every guard naming a duplicated
-        `assertion_id` is returned, not just the second: the plan is
-        unsatisfiable as a whole, and naming one of the pair would suggest the
-        other was fine.
+        **Counted over `plan.operations`, deliberately not over
+        `plan.preconditions`.** The operations are what the store will apply;
+        the preconditions are a derived claim *about* them that a producer may
+        simply not make. An earlier revision counted duplicate `expected`
+        values among `assertion_absent` preconditions, which protected only
+        plans that already carried such guards and missed every plan that did
+        not — including the ones `kgcs.recuration.evolution` and
+        `kgcs.recuration.ontology` emit, since both attach a single
+        `snapshot_version` guard and nothing else. Those plans committed the
+        duplicate exactly as before the check existed. Reading the operations
+        makes the refusal a property of what is about to be written rather than
+        of how well the producer annotated it.
+
+        It remains a property of the plan alone, so it still needs no reader
+        and is checked even for a write-only store. Every operation minting a
+        duplicated `assertion_id` yields a guard, not just the second: the plan
+        is unsatisfiable as a whole, and naming one of a pair would suggest the
+        other was fine. The guards are built with `assertion_absent_guard`, the
+        same constructor the planner uses, so a plan that *did* carry its own
+        guards gets back values equal to them.
 
         Such a plan is refused as `ERROR`, not `STALE` — no amount of
         re-evaluating the graph makes it applicable, and telling a caller to
         re-evaluate and retry would send it round a loop that cannot terminate.
         """
+        minted: list[tuple[str, str]] = []
+        for operation in plan.operations:
+            if operation.type is not CurationOperationType.ATTACH_ASSERTION:
+                continue
+            subject = operation.payload.get("subject_identity")
+            assertion_id = operation.payload.get("assertion_id")
+            # Narrowed explicitly: a payload is `dict[str, object]`, and an
+            # operation whose identity fields are not strings is malformed in a
+            # way this check cannot adjudicate.
+            if isinstance(subject, str) and isinstance(assertion_id, str):
+                minted.append((subject, assertion_id))
+
         counts: dict[str, int] = {}
-        for p in plan.preconditions:
-            if p.kind == ASSERTION_ABSENT_PRECONDITION_KIND:
-                counts[p.expected] = counts.get(p.expected, 0) + 1
+        for _, assertion_id in minted:
+            counts[assertion_id] = counts.get(assertion_id, 0) + 1
         return tuple(
-            p
-            for p in plan.preconditions
-            if p.kind == ASSERTION_ABSENT_PRECONDITION_KIND and counts[p.expected] > 1
+            assertion_absent_guard(subject, assertion_id)
+            for subject, assertion_id in minted
+            if counts[assertion_id] > 1
         )
 
     def _assertion_present(self, subject_identity: str, assertion_id: str) -> bool:

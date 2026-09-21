@@ -1,5 +1,38 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (PR #36 re-review — two defects found INSIDE the fixes):
+both original blockers confirmed closed, and re-review found two new ones in
+the fixes themselves, both reproduced here before being fixed.
+
+**NEW-1 (prose).** The F3 fix replaced a false property with a caller contract
+that prescribed two remedies, and *both were wrong*. Routing new evidence
+through `recuration.evolution.plan_supersession` **destroys the fact**: it
+emits `ATTACH(new)` then `RETRACT(old.assertion_id)`, and for an
+evidence-independent producer those are the same id, so it attaches a record
+and immediately retracts it. Measured: `COMMITTED`, live graph empty, the sole
+history row rewritten to cite `ev_B`, `ev_A` cited nowhere. The other remedy
+(fold evidence into `candidate_id`) corrupts corroboration. ADR-0019 now
+prescribes **no** workaround and says plainly there is no currently-supported
+path, pointing at PR #39. The `plan_supersession` defect is its own issue #40.
+
+**NEW-2 (code).** `_self_conflicting_guards` counted `plan.preconditions`, so
+it protected only plans that already carried `assertion_absent` guards and
+missed every plan that did not — including everything
+`recuration.evolution`/`ontology` emit, since both attach one snapshot guard
+and nothing else. Those committed the duplicate byte-identically to pre-fix.
+Now counted over **`plan.operations`** (still reader-free, so still holds over
+a write-only store), with guards synthesized via the same
+`assertion_absent_guard` constructor.
+
+**Lesson for this repo:** a check keyed off a *derived annotation* rather than
+the *thing being written* protects only well-annotated callers. Both defects
+were third-order — a defect inside a fix for a defect inside a fix.
+
+**Repo-wide fact:** kgcs `main` (14ffd0e) is currently RED against
+`agentic-kgis` main (de48639) — `test_every_operation_is_compensable_or_declared_non_compensable`
+fails because KGCS's hand-maintained `INVERSE_OPERATION` lacks `REVOKE_IDENTITY`.
+PR #38 is the repair. Any PR branched before #38 inherits this failure.
+
 Update 2026-09-21 (post-v1 platform fix): **`ATTACH_ASSERTION` now carries a
 per-subject guard (ADR-0019).** Branch
 `fix/attach-assertion-absence-precondition`, opened after the `agentic-kg`
