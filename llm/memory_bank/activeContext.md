@@ -1,5 +1,36 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (#38 review — R22): **release-critical criterion MET** —
+identity rollback is genuinely demonstrated to the standard the downstream
+brief demands. Three narrow fixes landed on top.
+
+- **The epoch-scoped limb of the acceptance criterion was vacuous.** It
+  compared `len(...) == 8`; the epoch read is as-of, so `@1`/`@2`/`@999` all
+  return 8 and it could not fail in the direction it claimed — "counting when
+  identity matters", inside the very test proving the release property. Now
+  identity-keyed, plus a boundary assertion that the epoch *before* creation
+  returns nothing. A store mutant returning the right count with wrong
+  identities passes the old form and fails the new one.
+- **A second silent fallback in `_invert`, undisclosed until review**: a
+  *malformed* `INVERSE_PAYLOAD_KEY` leaked lineage AND the sentinel key itself.
+  Decision taken (owner-approved): the absent key now raises by default with an
+  explicit `allow_legacy_reversal_data=True` opt-in; the malformed key raises
+  **unconditionally**. The fallback's real precondition was never "the producer
+  predates the key" but "`reversal_data` holds nothing but the payload" — P6
+  proved those differ.
+- Docstrings in `compensate.py` and `evolution.py` still declared
+  `CREATE_IDENTITY` non-compensable, in files this PR edits. Corrected.
+
+Filed, not fixed: **#41** — `fully_compensable` means "a named inverse exists",
+not "rollback will work"; proposes a rename plus
+`executable_against(supported_operations)` so "consult both" is an API.
+
+**PROCESS: two agents share the `/mnt/c/code/agentic-kgcs` checkout, and HEAD
+moving under a reviewer has now invalidated measurements twice.** Work in a
+dedicated `git worktree` (detached, so the shared checkout's branch is never
+touched) and pin `kg_contracts` to a scratch clone. Never measure in the shared
+tree.
+
 Update 2026-09-21 (Defect 2 — the CREATE_IDENTITY inverse): **rollback of an
 identity-creation run is now demonstrated, not asserted (ADR-0020).** Branch
 `fix/complete-create-identity-inverse`, the KGCS half of KGIS ADR-0025.

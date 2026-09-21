@@ -62,7 +62,18 @@ def engine(clock: FixedClock) -> CurationEngine:
     return CurationEngine.create(graph_id=GRAPH_ID, clock=clock)
 
 
-def _handbuilt(op_type: CurationOperationType) -> CurationPlan:
+def _handbuilt(
+    op_type: CurationOperationType, *, reversal_data: dict[str, object] | None = None
+) -> CurationPlan:
+    """A one-operation plan. Default `reversal_data` is the MODERN shape.
+
+    It carries the inverse payload under `INVERSE_PAYLOAD_KEY` alongside a
+    lineage key, which is what every in-repo producer emits and what the
+    compensator requires by default. Tests that want the pre-ADR-0018 shape
+    (payload at the top level, no sentinel) pass it explicitly, so "this test
+    exercises legacy data" is visible at the call site rather than baked into
+    the helper.
+    """
     return CurationPlan(
         plan_id=f"pl_{op_type.value.lower()}",
         candidate_ids=("cand_1",),
@@ -72,13 +83,22 @@ def _handbuilt(op_type: CurationOperationType) -> CurationPlan:
                 operation_id=f"op_{op_type.value.lower()}",
                 type=op_type,
                 payload={"forward": "payload"},
-                reversal_data={"undo": "data"},
+                reversal_data=(
+                    {INVERSE_PAYLOAD_KEY: {"undo": "data"}, "lineage": "not-payload"}
+                    if reversal_data is None
+                    else reversal_data
+                ),
             ),
         ),
         preconditions=(),
         evidence_ids=(),
         policy_version="1",
     )
+
+
+#: The pre-ADR-0018 shape: the inverse payload sitting at the top level of
+#: `reversal_data` with no sentinel key.
+LEGACY_REVERSAL_DATA: dict[str, object] = {"undo": "data"}
 
 
 class TestInverseMap:
@@ -142,10 +162,60 @@ class TestInverseMap:
         assert result.plan is not None
         (op,) = result.plan.operations
         assert op.type is inverse
-        # An op whose producer predates INVERSE_PAYLOAD_KEY still compensates:
-        # the whole reversal_data is used as the inverse payload (back-compat).
+        # The inverse payload is the sentinel's value, and the lineage sharing
+        # reversal_data never reaches it.
         assert op.payload == {"undo": "data"}
+        assert "lineage" not in op.payload
         assert op.reversal_data["original_payload"] == {"forward": "payload"}
+
+    def test_a_missing_inverse_payload_key_raises_instead_of_falling_back(self) -> None:
+        # ADR-0018 made this a silent fallback to the whole reversal_data. Its
+        # intended precondition was "this producer predates the key"; its ACTUAL
+        # precondition is "reversal_data holds nothing but the payload", and
+        # those differ — mutation showed a CREATE_IDENTITY whose key was removed
+        # still rolling back happily with `candidate_id` inside the operation
+        # payload. Strict is now the default.
+        legacy = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION, reversal_data=LEGACY_REVERSAL_DATA
+        )
+        with pytest.raises(ValueError, match="carries no 'inverse_payload'"):
+            Compensator().compensate(legacy, against_snapshot=1)
+
+    def test_legacy_reversal_data_is_usable_only_by_explicit_opt_in(self) -> None:
+        # The escape hatch still exists for a caller that knows its
+        # reversal_data holds nothing but the payload — it is just no longer
+        # the default, and saying so is now a decision at the call site.
+        legacy = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION, reversal_data=LEGACY_REVERSAL_DATA
+        )
+        result = Compensator(allow_legacy_reversal_data=True).compensate(
+            legacy, against_snapshot=1
+        )
+        assert result.plan is not None
+        (op,) = result.plan.operations
+        assert op.payload == dict(LEGACY_REVERSAL_DATA)
+
+    @pytest.mark.parametrize("malformed", ["a string", 42, ["a", "list"], None])
+    def test_a_malformed_inverse_payload_key_always_raises(
+        self, malformed: object
+    ) -> None:
+        # The second fallback, undisclosed until review and worse than the
+        # first: a key PRESENT but not a mapping fell through the same
+        # isinstance branch, so the payload became the whole reversal_data —
+        # leaking lineage AND the sentinel key `inverse_payload` itself, a
+        # shape no consumer expects. Never back-compat, always a producer bug.
+        plan = _handbuilt(
+            CurationOperationType.ATTACH_ASSERTION,
+            reversal_data={INVERSE_PAYLOAD_KEY: malformed, "lineage": "not-payload"},
+        )
+        for compensator in (
+            Compensator(),
+            # ...and the opt-in does NOT excuse it. A malformed key is a bug in
+            # every configuration.
+            Compensator(allow_legacy_reversal_data=True),
+        ):
+            with pytest.raises(ValueError, match="malformed 'inverse_payload'"):
+                compensator.compensate(plan, against_snapshot=1)
 
     def test_inverse_payload_key_wins_over_the_rest_of_reversal_data(self) -> None:
         # The lineage/provenance that shares reversal_data must never reach the
@@ -316,7 +386,7 @@ class TestSnapshotGuard:
                     operation_id="op_1",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_1"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_1"}},
                 ),
             ),
             preconditions=(
@@ -519,13 +589,13 @@ class TestOrderingAndMixing:
                     operation_id="op_first",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_first"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_first"}},
                 ),
                 CurationOperation(
                     operation_id="op_second",
                     type=CurationOperationType.ATTACH_ASSERTION,
                     payload={},
-                    reversal_data={"assertion_id": "as_second"},
+                    reversal_data={INVERSE_PAYLOAD_KEY: {"assertion_id": "as_second"}},
                 ),
             ),
             preconditions=(),
@@ -707,13 +777,31 @@ class TestRollbackIsDemonstrated:
 
         # 3. ...including under an epoch-scoped read of the epoch that created
         #    them, which is the read a revoke must not break.
+        #
+        #    Asserted by IDENTITY, not by count. An earlier version of this limb
+        #    compared `len(...) == RUN_SIZE`, which review showed to be
+        #    decorative: the epoch read is as-of (`record_epoch > epoch` hides),
+        #    so @1, @2 and @999 all return 8 and the assertion could not fail in
+        #    the direction it claimed — a "counting when identity matters"
+        #    defect sitting inside the test that proves the release-critical
+        #    property. It now pins WHICH records come back, and the boundary
+        #    below pins that the epoch option is honoured at all.
         at_creation = GraphReadOptions(
             curation_epoch=created_at_epoch, include_revoked=True
         )
-        assert (
-            len(store.find_entities(entity_type="TestEntity", options=at_creation))
-            == self.RUN_SIZE
+        seen = store.find_entities(entity_type="TestEntity", options=at_creation)
+        assert {e.identity_id for e in seen} == set(identity_ids)
+        assert all(e.status is CurationStatus.REVOKED for e in seen)
+        assert {e.curation_epoch for e in seen} == {created_at_epoch}
+
+        #    The boundary: one epoch BEFORE creation must return nothing. This
+        #    is what makes the epoch argument load-bearing — without it the
+        #    assertion above would pass against a read that ignored the option
+        #    entirely.
+        before_creation = GraphReadOptions(
+            curation_epoch=created_at_epoch - 1, include_revoked=True
         )
+        assert store.find_entities(entity_type="TestEntity", options=before_creation) == []
 
     def test_include_superseded_does_not_reveal_a_revoked_identity(
         self, clock: FixedClock, auto_scores: CandidateScores

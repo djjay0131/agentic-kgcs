@@ -129,8 +129,20 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   repository can show it rather than claim it. Executed, 8 identities:
   forward `COMMITTED` at epoch 1, rollback `COMMITTED` at epoch 2, default read
   `0` entities (was 8), `include_revoked=True` read `8` entities all `REVOKED`
-  all at `curation_epoch=1`, epoch-scoped read at epoch 1 still `8`, and
-  `include_superseded=True` `0` — the two history switches are independent.
+  all at `curation_epoch=1`, an epoch-scoped read at epoch 1 returning
+  **exactly the 8 identities that were created**, and `include_superseded=True`
+  `0` — the two history switches are independent.
+
+  That epoch-scoped limb asserts **identities, not a count**. It originally
+  compared `len(...) == 8`, which review showed to be decorative: the epoch read
+  is as-of (`record_epoch > epoch` hides), so `@1`, `@2` and `@999` all return 8
+  and the assertion could not fail in the direction it claimed — a "counting
+  when identity matters" defect sitting inside the very test that proves the
+  release-critical property. It now pins which records come back, plus a
+  companion assertion that the epoch *before* creation returns nothing, which is
+  what makes the epoch argument load-bearing. Measured against a store mutant
+  returning the right count with wrong identities: the old form passes, the new
+  form fails.
 - A promotion plan from `recuration.evolution` is compensable for the same
   reason and by the same constructor.
 - The two repos cannot disagree about which type reverses which.
@@ -161,6 +173,10 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   and nothing stronger: an attach plan reports `fully_compensable=True` and its
   rollback still returns `UNSUPPORTED_OPERATION`. A caller must consult both.
   Pinned by `test_a_named_inverse_does_not_mean_an_executable_rollback`.
+  `fully_compensable` is a poor name for this — it reads as "the rollback will
+  work" — and renaming it alongside an `executable_against(supported_operations)`
+  predicate, so "consult both" is an API rather than prose, is filed as
+  issue #41.
 - **Assertion rollback is still not demonstrable.** `RETRACT_ASSERTION` is not
   in `DEFAULT_SUPPORTED_OPERATIONS` because the reference store does not
   implement it (ADR candidate 0015, an upstream ask). So a *mixed* plan's
@@ -182,22 +198,31 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   and the measured single test failure against the new contract confirms it.
   **This audit expires the moment KGCS reads entities back**, and the first such
   read must decide explicitly whether it wants revoked records.
-- **A producer that forgets `INVERSE_PAYLOAD_KEY` fails silently, and the
-  reference store hides it.** `Compensator._invert` falls back to using the
-  *whole* `reversal_data` as the inverse payload when the key is absent —
-  ADR-0018's deliberate back-compat path for un-migrated producers. Found by
-  mutation: removing the key from the planner's `CREATE_IDENTITY` left the
-  8-identity rollback demonstration **still passing**, because the resulting
-  payload `{"identity_id", "candidate_id"}` still carries a string
-  `identity_id` and `MemoryGraphStore` ignores the extra key. What actually
-  leaked was `candidate_id` — lineage in an operation payload, the exact defect
-  class ADR-0018 fixed for `RETRACT_ASSERTION`. A stricter adapter that
-  validates its payloads would reject it. The payload-shape assertion
-  (`set(op.payload) == {"identity_id", "reason"}`) is what catches it, and it is
-  load-bearing rather than decorative — so it is now asserted **inside the
-  rollback demonstration** as well as in `TestInverseMap`, which is what closed
-  the mutant. A demonstration that can watch a rollback succeed while lineage
-  leaks into the operation payload is too weak to be the acceptance criterion.
+- **Both of `_invert`'s silent fallbacks are now loud.** ADR-0018 added a
+  back-compat path: an absent `INVERSE_PAYLOAD_KEY` meant "use the whole
+  `reversal_data` as the payload". Its *intended* precondition was "this
+  producer predates the key"; its *actual* precondition is "`reversal_data`
+  holds nothing but the payload", and mutation proved those differ — removing
+  the key from the planner's `CREATE_IDENTITY` left the 8-identity rollback
+  committing and reading back perfectly, with `candidate_id` (lineage) sitting
+  inside the operation payload: the exact defect ADR-0018 introduced the key to
+  fix. Review then found a **second, undisclosed** fallback on the same branch:
+  a key *present but malformed* (not a mapping) fell through the same
+  `isinstance` test, leaking lineage **and the sentinel key `inverse_payload`
+  itself** — a shape no consumer expects.
+
+  Both are closed, asymmetrically and deliberately: the **absent** key raises
+  by default with an explicit `Compensator(allow_legacy_reversal_data=True)`
+  opt-in for a caller that knows its `reversal_data` holds nothing else; the
+  **malformed** key raises **unconditionally**, opt-in or not, because it is
+  never back-compat and always a producer bug.
+
+  The general point, and why it is in the ADR rather than the changelog: a
+  fallback is only safe if something checks its real precondition. This one
+  checked a proxy, so it silently converted "the producer forgot" into "ship
+  the lineage as the payload". Making it opt-in does not make it safer — it
+  makes the caller state the precondition it is relying on.
+
 - A sibling PR (ADR-0019) adds the first such read — `assertions_for` in
   `PlanExecutor._assertion_present`, with `include_superseded=True`. Whichever
   merges second must decide whether that read should also pass
