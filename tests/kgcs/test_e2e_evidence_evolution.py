@@ -52,6 +52,14 @@ VALUE = 2015
 _CLOCK = FixedClock(datetime(2026, 8, 22, tzinfo=UTC))
 _LATER = datetime(2026, 9, 1, tzinfo=UTC)
 
+#: The two correct outcomes of replaying an already-committed record, one per
+#: branch: `COMMITTED` (the upsert-by-id adapter absorbs it) on this branch,
+#: `STALE` once ADR-0019's `assertion_absent` guard lands. A test that pinned
+#: one would fail on the other for a reason that is not a defect. The
+#: *observable state* is what both worlds agree on, and that is what the
+#: replay tests assert.
+_REPLAY_OUTCOMES = (ExecutionOutcome.COMMITTED, ExecutionOutcome.STALE)
+
 #: Crockford base32, the ULID character class — the adopter's id alphabet.
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -330,18 +338,24 @@ class TestEvidenceEvolutionRoundTrip:
         must still mint the same record id, or the fix would have traded one
         silent duplication for another.
 
-        Executed and read back, not merely planned: the id is what ADR-0019's
-        `assertion_absent` guard keys on, and that guard is not on this branch,
-        so what this test can show *here* is that an upsert-by-id adapter ends
-        with ONE record rather than two. It is deliberately NOT named "is not a
-        second record" — on the append-semantics reference store a replay still
-        lands a second row under one id. ADR-0021 §What this does NOT fix
-        states where the containment actually comes from.
+        Executed and read back, not merely planned. The **outcome** deliberately
+        is not pinned: here the replay commits and the upsert-by-id adapter
+        absorbs it; once ADR-0019's `assertion_absent` guard lands (PR #36) the
+        very same replay is refused `STALE`. Both are correct, and pinning
+        either one would make this test break on the other branch for a reason
+        that is not a defect — measured by composing the two branches.
+
+        What must hold in **either** world, and is what this test asserts, is
+        the observable state: the graph still holds ONE record of this fact,
+        under the id the first attach minted, still citing its own evidence.
+        The name says "is the same record", not "is not a second row": on the
+        append-semantics reference store a replay does still land a second row
+        under one id (ADR-0021 §What this does NOT fix).
         """
         store, executor, subject, record_a = graph
         replayed = _plan_for(_candidate(subject, "ev_A"), str(store.current_epoch()))
         assert replayed.operations[0].payload["assertion_id"] == record_a.assertion_id
-        assert executor.execute(replayed).outcome is ExecutionOutcome.COMMITTED
+        assert executor.execute(replayed).outcome in _REPLAY_OUTCOMES
         live = _by_id(store.assertions_for(subject))
         assert set(live) == {record_a.assertion_id}
         assert _evidence_of(live[record_a.assertion_id]) == ["ev_A"]
@@ -419,7 +433,11 @@ class TestTheFixReachesAProducerWithNoEvidenceRefs:
     ) -> None:
         """The other half: the origin must not turn a re-ingest of the SAME
         source row into a new record, or the fix would duplicate every
-        structured fact on every run."""
+        structured fact on every run.
+
+        The replay outcome is left unpinned for the same reason as the test
+        above — it commits here and is refused `STALE` once ADR-0019 lands.
+        """
         store, executor, subject, _record_a = graph
         candidate = self._structured(subject, producer="producer_alpha", locator="s3://a.csv")
         first = _plan_for(candidate, str(store.current_epoch()))
@@ -431,7 +449,7 @@ class TestTheFixReachesAProducerWithNoEvidenceRefs:
             str(store.current_epoch()),
         )
         assert str(replay.operations[0].payload["assertion_id"]) == id_one
-        assert executor.execute(replay).outcome is ExecutionOutcome.COMMITTED
+        assert executor.execute(replay).outcome in _REPLAY_OUTCOMES
         live = _by_id(store.assertions_for(subject))
         assert id_one in live
         assert live[id_one].provenance.source_ref == "s3://a.csv"
