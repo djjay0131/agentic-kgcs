@@ -168,6 +168,39 @@ guard is orthogonal to it and holds unchanged under it. Evidence
 evolution is a release-critical adopter acceptance criterion; a guard that
 foreclosed it would be a worse defect than the one being fixed.
 
+### The shape this is an instance of
+
+Worth stating separately from the fix, because it recurs and because naming it
+is more durable than any one patch. Both the original defect and the defect
+found *inside* its fix are the same error at different altitudes:
+
+> **A check keyed off a derived annotation protects only the callers that
+> bothered to annotate. The operations are what the store will apply; the
+> preconditions are a derived claim *about* them that a producer may simply
+> not make.**
+
+The original defect: `ATTACH_ASSERTION` emitted no per-subject guard, so replay
+protection depended on a plan-level `snapshot_version` annotation that a
+re-planned replay satisfies by construction. The defect inside the fix: the
+new self-conflict check counted `assertion_absent` *preconditions*, so it
+protected only plans that already carried them and silently passed the plans
+`kgcs.recuration.evolution` and `kgcs.recuration.ontology` emit — which carry
+one snapshot guard and nothing else. In both cases the check read a claim about
+the write instead of the write.
+
+The test-side twin of the same error is a check that cannot reach the code it
+targets. The first test written for the ATTACH-only filter above passed under
+the mutation it was supposed to catch, because `execute()` evaluates
+`supported_operations` *before* the self-conflict check and short-circuited
+on an unsupported `RETRACT_ASSERTION`. The test exercised the pre-check, not
+the check it named. It only became discriminating once
+`supported_operations` was widened so the plan actually reached the check.
+
+The rule that falls out, for any future guard in this repo: **assert against
+the thing that will be written, and prove by mutation that the assertion's
+code path is actually reached.** An annotation is evidence about the write, not
+the write.
+
 ## Alternatives Considered
 
 ### A subject-version guard (`entity_version = <subject's current version>`)
