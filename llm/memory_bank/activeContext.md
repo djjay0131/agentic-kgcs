@@ -56,8 +56,21 @@ both stated and pinned. Also fixed: a `default=str` determinism hazard in the
 seed (now refuses an unrenderable `object_value`), and two producer
 obligations are now stated rather than assumed.
 
-**Merge order decided: #36 first, then this rebases** and carries the rewrite
-of **three** of #36's tests (not one). #36's F1 guard stays reachable.
+**Revision 3.** #38 and #36 both merged; this branch is rebased onto
+`main` and **carries the rewrite of the three ADR-0019 tests** its record seed
+invalidated — two of them only in their *construction* (ADR-0019's F1 guard
+stays reachable and is re-pointed at two candidates with identical record
+content), one in its *meaning* (a re-assertion now lands as a new record, and
+is paired with a new test pinning that a verbatim replay is still refused).
+Zero tests removed: 459 → 511 distinct names.
+
+Also in revision 3: `include_snapshot_in_locator=False` is stated as a
+**deployment prerequisite**, not a mitigation — measured, 30 daily re-syncs of
+one unchanged row produce 30 `ACTIVE` records under KGIS's default, 1 with the
+flag off, while two genuine sources still separate. And ADR-0021
+§Alternative 2 now leads with the argument that actually decides it: a record
+identity that is a **value** is checkable by anyone holding the row, whereas
+the alternative moves correctness out of one pure function into N adapters.
 
 
 

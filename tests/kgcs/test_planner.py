@@ -11,7 +11,6 @@ from kg_contracts.candidates import (
     SourceCoordinates,
 )
 from kg_contracts.curation import CurationOperationType, CurationPlan, Precondition
-from kg_contracts.curation import CurationOperationType, CurationPlan
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import (
     make_attribute_candidate,

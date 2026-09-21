@@ -123,6 +123,39 @@ Three changes realize it:
 
 No `kg_contracts` change. No new operation type. No new precondition kind.
 
+> ### ⚠️ Deployment prerequisite
+>
+> **Any adopter running periodic re-syncs of a structured source MUST configure
+> that source's reader with `include_snapshot_in_locator=False` before this
+> change reaches a graph.**
+>
+> This is a prerequisite, not a mitigation. KGIS's structured reader stamps
+> `@snapshot=<version>` into `source_coordinates.locator` **by default**, and
+> the record identity reads the locator. So with the default left in place a
+> nightly re-sync mints a **new record for every row it re-reads, even when
+> nothing changed**. Measured on this branch — 30 daily re-syncs of **one
+> unchanged row**:
+>
+> ```
+> include_snapshot_in_locator=True  (KGIS DEFAULT)   distinct record ids: 30   ACTIVE rows: 30
+> include_snapshot_in_locator=False (the prerequisite) distinct record ids: 1  ACTIVE rows: 1
+> two different source locators, flag OFF              distinct record ids: 2  ACTIVE rows: 2
+> ```
+>
+> The last line is the point: turning the flag off costs nothing that matters.
+> Two genuinely different sources still separate correctly — it suppresses only
+> the re-read of the same row from the same place, which is a replay.
+>
+> **Operator check:** if a source is read on a schedule and its locator ends in
+> `@snapshot=`, it is misconfigured for this change. Fix the reader
+> configuration, or route re-syncs through `plan_supersession` so each
+> generation retires the last.
+>
+> This is not the silent data loss it replaces — nothing is overwritten and
+> nothing is lost — but 30 identical `ACTIVE` records a month is not an
+> acceptable steady state, and an adopter must be *told*, not left to discover
+> it.
+
 ## Rationale
 
 **Why the record seed contains what it contains.** Three properties were
@@ -256,31 +289,44 @@ already describes it as optional. Recording the correction here rather than
 quietly deleting it, because the owner was asked to accept a migration burden
 on that comparison.
 
-**The honest rejection**, resting only on what is there:
+**The decisive argument is not blast radius.** Counting contract sites is how
+the first draft argued, and even corrected it is the weaker case — a big change
+is not a wrong one. The reason to prefer the split is this:
+
+- **A record identity that is a *value* is checkable by anyone holding the
+  row.** `assertion_id` is now a pure function of the record's own content, so
+  *anything* — an adapter, an auditor, a migration script, a test, a support
+  engineer with a row in front of them — can recompute it and compare, with no
+  store cooperation and nothing to trust. This ADR relies on that property
+  twice by execution: `records.backfill_record_id` is the migration, and
+  `test_backfill_reproduces_exactly_what_the_planner_mints` fails if the
+  planner and the recomputation ever drift apart. Under Alternative 2 the
+  record's identity is **not** a property of the record; it is a property of
+  how some store chose to version it. Correctness moves out of one pure
+  function and into N adapters — and every adapter that gets its version chain
+  subtly wrong gets it wrong invisibly, because there is nothing to recompute
+  and compare against.
+
+That is the whole argument. The remaining two points are real costs, but they
+are supporting, not decisive:
 
 - **The cross-repo conformance suite.** `kg_contracts/testing/contract.py` —
   the reusable suite **every adapter** (memory, Neo4j, Spanner, …) runs —
-  references `assertion_id` in **21** places, comparing it by equality and by
-  set membership. A composite identity changes that suite, and a change there
-  propagates to every backend that must keep passing it. *This* is the
-  "larger contract change" argument; the first draft did not make it.
+  references `assertion_id` in **21** lines, comparing it by equality and by
+  set membership. A composite identity changes that suite, and the change
+  propagates to every backend that must keep passing it.
 - **`ConflictRecord.preferred_assertion_id`** (`assertions.py:179`) is a real
   record pointer in the frozen contract, with a validator enforcing
   `preferred_assertion_id in assertion_ids`. It is exactly the role the first
   draft wrongly attributed to `superseded_by`, and under a composite identity
   it could no longer name a single record.
-- **Per-adapter cost.** It pushes a version chain into **every** adapter
-  instead of into the one place ids are minted. A uniqueness constraint on
-  `assertion_id` is something every backend already has; a correct per-id
-  version chain is something each must reimplement and each can get wrong.
 
-**This is a genuinely closer call than the first draft made it look.** Against
-the three points above stands a real zero-migration benefit. The judgement
-recorded here is that a record identity which is a *value* — computable by
-anyone holding the row, with no store cooperation — is worth a one-time
-offline backfill, and that the backfill is now a stated, testable procedure
-(§Risks) rather than an open problem. **The owner may reasonably decide
-otherwise, and now has correct information to decide on.**
+**This is a genuinely closer call than the first draft made it look**, and it
+got closer still: shipping the backfill as a tested one-pass procedure
+(§Risks) **shrinks Alternative 2's zero-migration advantage**, which was its
+strongest card. What remains on that side is real, and the judgement recorded
+here is a judgement, not a proof. **The owner may reasonably decide otherwise,
+and now has correct information to decide on.**
 
 ### Alternative 3 — include the whole of `authority` / `provenance` in the seed
 
@@ -391,18 +437,21 @@ a decision, not a drift.
   **The owner still rules on whether to run it**, but the decision is now
   "run this procedure" rather than "solve this problem".
 
-- **Producer obligation 1 — locator stability.** The record identity now reads
-  `provenance.source_ref`, i.e. `source_coordinates.locator`, which
-  `kg_contracts` already documents as "the primary idempotency anchor" (spec
-  §5.8). A producer that folds a per-run token into the locator mints a fresh
-  record on every run. **KGIS's structured reader stamps `@snapshot=<version>`
-  into the locator by default**, so a re-sync at a new snapshot version is a
-  new record of every fact it re-reads. That is semantically honest ("as of
-  snapshot v2 the source still says this") and it is loud and recoverable
-  rather than silent — but it is a new record per row, and the remedies are to
-  route re-syncs through supersession or to set
-  `include_snapshot_in_locator=False`, which KGIS provides for exactly this.
-  **This is the second thing the owner should weigh.**
+- **Deployment prerequisite — locator stability.** See the boxed
+  prerequisite in §Decision, which is the operator-facing statement. In short:
+  the record identity reads `provenance.source_ref`
+  (= `source_coordinates.locator`), which `kg_contracts` already documents as
+  "the primary idempotency anchor" (spec §5.8), and **KGIS's structured reader
+  stamps `@snapshot=<version>` into it by default**. Left at the default, a
+  nightly re-sync mints a new record for every row it re-reads — measured, 30
+  re-syncs of one unchanged row produce 30 `ACTIVE` records. Any adopter on a
+  re-sync schedule must set `include_snapshot_in_locator=False`, or route
+  re-syncs through supersession.
+
+  It was tempting to file this as a tradeoff, because it *is* an improvement on
+  the silent overwrite it replaces — nothing is lost. It is filed as a
+  prerequisite instead, because an adopter who skips a tradeoff gets a slightly
+  worse graph and an adopter who skips this gets 30 duplicate records a month.
 
 - **Producer obligation 2 — evidence order.** `['ev_A','ev_B']` and
   `['ev_B','ev_A']` are different records. A plan's `evidence_ids` are
@@ -437,8 +486,8 @@ a decision, not a drift.
   exactly as on `main`. Measured on this branch, unmodified.
 
   The containment that actually exists comes from two places this ADR does not
-  own: **ADR-0019's `assertion_absent` guard** (PR #36), which refuses the
-  replay outright, and **adapters that upsert by `assertion_id`**, which
+  own: **ADR-0019's `assertion_absent` guard** (now on `main`), which refuses
+  the replay outright, and **adapters that upsert by `assertion_id`**, which
   `e2e_harness.py` argues every real adapter must be. What this ADR *does*
   contribute is the reachable half of the second defect: `plan_supersession`
   refuses to emit a retract against a non-`ACTIVE` record
@@ -482,16 +531,31 @@ a decision, not a drift.
 ## Related Issues / PRs
 
 - This PR (design proposal, not merged).
-- PR #36 — ADR-0019 `assertion_absent`. **Semantic interaction**, see the PR
-  body. **#36 merges first, then this PR rebases and carries the rewrite of
-  three of #36's tests** — not one, as the first draft said:
-  `test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence`,
-  `test_a_plan_that_mints_one_assertion_id_twice_is_refused_as_error`, and
-  `test_the_self_conflict_check_needs_no_reader`. The latter two depend on a
-  construction (two different facts forced under one `candidate_id`) that no
-  longer collides under this ADR. **#36's F1 guard itself stays reachable and
-  correct** — a different construction still reaches it — so the rewrite is
-  mechanical, but the first draft's claim that F1 was "unaffected" was wrong.
+- **ADR-0019 / PR #36 (`assertion_absent`) — merged, and this ADR carries the
+  three test rewrites it made necessary.** The two are complementary: a
+  re-assertion mints a new record id so the guard lets it land, and a true
+  replay mints the same id so the guard still refuses it. That is the answer
+  to ADR-0019's own open question 2.
+
+  Three of ADR-0019's tests were rewritten here — not one, as the first draft
+  of this ADR said:
+
+  - `test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence`
+    asserted as correct the behaviour this ADR deliberately reverses. It is now
+    `…_lands_as_a_new_record`, and is **paired** with a new
+    `test_a_reassertion_replayed_verbatim_is_still_refused` so neither half of
+    the guard's new discrimination can regress unnoticed.
+  - `test_a_plan_that_mints_one_assertion_id_twice_is_refused_as_error` and
+    `test_the_self_conflict_check_needs_no_reader` both built their collision
+    by forcing two *different* facts under one `candidate_id` — which no longer
+    collides, because removing exactly that collision is one of this ADR's
+    stated goals. **ADR-0019's F1 guard itself stays reachable and correct**;
+    only the construction changed, to two candidates whose *record content* is
+    identical, which is one record proposed twice. The first draft's claim that
+    F1 was "unaffected" was wrong.
+
+  No ADR-0019 behaviour was weakened and no test was deleted: the suite goes
+  from 459 to 511 distinct test names with **zero** removals.
 - PR #38 — ADR-0020 `REVOKE_IDENTITY` compensation. Adjacent hunks only.
 
 ## Supersedes
