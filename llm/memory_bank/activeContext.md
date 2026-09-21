@@ -1,5 +1,43 @@
 # Active Context — agentic-kgcs
 
+Update 2026-09-21 (post-v1 platform fix): **`ATTACH_ASSERTION` now carries a
+per-subject guard (ADR-0019).** Branch
+`fix/attach-assertion-absence-precondition`, opened after the `agentic-kg`
+adopter wiring its curation pipeline hit a replayed attach. Reproduced here
+against the reference `MemoryGraphStore` on `v1.0.0` (609270e) and re-verified
+on 14ffd0e: re-planning an already-committed candidate against the graph's
+**current** snapshot satisfies the plan-level `snapshot_version` guard and
+re-applies the attach — measured `COMMITTED`, epoch 1→2, and two rows on the
+subject carrying **one** `assertion_id`. The same replay of a `CREATE_IDENTITY`
+is correctly refused `STALE` by its `entity_version=0` guard, so replay
+protection was inconsistent *within one planner*. The duplicate is worse than
+redundant: `mark_superseded(assertion_id)` reaches only the first row.
+
+Fix. The planner emits, per attach,
+`Precondition(kind="assertion_absent", subject=<subject_identity>,
+expected=<assertion_id>)` — the exact analogue of `entity_version=0`, and
+read-free because the planner minted that id, so ADR candidate 0003's
+snapshot-read objection does not apply (0003 is narrowed, not retired: it
+remains correct for a subject-*version* guard). `PlanExecutor` enforces it
+alongside the snapshot guard, reading with `include_superseded=True` so a
+superseded record still blocks a replay of its id. **No `kg_contracts`
+change** — `Precondition.kind` is a free-form `str`. Legitimate re-assertion
+still applies: new evidence arrives as a new candidate, which derives a
+different `assertion_id`. Residual, pinned by test rather than left implicit:
+both executor-enforced guards need a `GraphReader`; over a write-only store
+neither is enforceable. Out of scope, noted in the ADR: `recuration.evolution`
+and `recuration.ontology` build their own plans and still emit only the
+snapshot guard.
+
+**Environment note for future sessions:** `/mnt/c/code/agentic-kgis` may hold an
+in-flight working tree (a concurrent agent). Pin local runs to a clean checkout
+of agentic-kgis `origin/main` — CI installs `agentic-kgis @ git+...@main` — or
+unrelated in-flight `kg_contracts` edits surface as failures here. Observed
+2026-09-21: an in-flight `ResolutionDecision` validator ("create_new_identity=True
+forbids resolved_identity") makes `kgcs.policy.ResolutionPolicy.resolve` raise
+for every AUTO-routed entity candidate. **That is an upstream-sequencing item
+for the owner, not a KGCS defect** — but it will break this repo on the day it
+lands unless `ResolutionPolicy` is updated in the same sequence.
 Update 2026-09-21 (#38 review — R22): **release-critical criterion MET** —
 identity rollback is genuinely demonstrated to the standard the downstream
 brief demands. Three narrow fixes landed on top.

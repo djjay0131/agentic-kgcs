@@ -10,6 +10,7 @@ founding + contract decisions. Use `0000-template.md`.
 |---|---|---|
 | [0017](0017-identifier-strength-is-entity-type-relative.md) | Identifier strength is entity-type relative; scoped identifiers | Proposed |
 | [0018](0018-compensating-plans-assert-post-application-state.md) | A compensating plan asserts post-application state, and carries a payload a store can apply | Proposed |
+| [0019](0019-attach-assertion-absence-precondition.md) | `ATTACH_ASSERTION` carries an `assertion_absent` per-subject precondition | Proposed |
 | [0020](0020-kgcs-completes-the-create-identity-inverse.md) | KGCS completes the `CREATE_IDENTITY` inverse, and stops keeping its own inverse table | Proposed |
 
 Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`

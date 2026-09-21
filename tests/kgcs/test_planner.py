@@ -138,6 +138,42 @@ class TestPreconditionsAndEvidence:
         assert len(version_guards) == 1
         assert version_guards[0].expected == "0"
 
+    def test_attach_assertion_guards_its_minted_assertion_id(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        # ADR-0019: the symmetric counterpart of entity_version=0. Read-free,
+        # because the planner minted the assertion id itself.
+        subject = known_identity()
+        plan = _plan(
+            [make_attribute_candidate(graph_id=GRAPH_ID, subject=subject, scores=auto_scores)]
+        )
+        assert plan is not None
+        assert plan.operations[0].type is CurationOperationType.ATTACH_ASSERTION
+        guards = [p for p in plan.preconditions if p.kind == "assertion_absent"]
+        assert len(guards) == 1
+        assert guards[0].subject == subject
+        assert guards[0].expected == plan.operations[0].payload["assertion_id"]
+
+    def test_every_attach_operation_gets_its_own_guard(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        # One guard per attach, not one per plan: a two-attach plan replayed
+        # after only one of its assertions landed must still be refused.
+        candidates = [
+            make_attribute_candidate(
+                graph_id=GRAPH_ID, subject=known_identity(), attribute=name, scores=auto_scores
+            )
+            for name in ("height_cm", "width_cm")
+        ]
+        plan = _plan(candidates)
+        assert plan is not None
+        attach_ops = [
+            op for op in plan.operations if op.type is CurationOperationType.ATTACH_ASSERTION
+        ]
+        assert len(attach_ops) == 2
+        guarded = [p.expected for p in plan.preconditions if p.kind == "assertion_absent"]
+        assert guarded == [str(op.payload["assertion_id"]) for op in attach_ops]
+
     def test_evidence_ids_are_deduplicated_in_order(self, auto_scores: CandidateScores) -> None:
         from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
 

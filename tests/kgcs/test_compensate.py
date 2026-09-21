@@ -294,7 +294,11 @@ class TestSnapshotGuard:
     ) -> None:
         store, _executor, plan, new_epoch = self._committed(engine, auto_scores, clock)
         # The source plan was computed against epoch 0 and committed at 1.
-        assert [p.expected for p in plan.preconditions] == ["0"]
+        # Scoped to the snapshot guard: an attach also carries its own
+        # `assertion_absent` guard (ADR-0019), which is not what this asserts.
+        assert [
+            p.expected for p in plan.preconditions if p.kind == SNAPSHOT_PRECONDITION_KIND
+        ] == ["0"]
         assert new_epoch == 1
 
         result = Compensator().compensate(plan, against_snapshot=new_epoch)

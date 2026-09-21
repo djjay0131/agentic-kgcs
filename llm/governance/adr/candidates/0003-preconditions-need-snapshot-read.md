@@ -74,3 +74,20 @@ plane) is revisited in the ER waves. No contract change needed for v1.
 PROMOTE — a durable KGCS-local decision; the frozen contract added nothing to resolve it. Accepted for v1.
 
 See `llm/governance/kgcs-v1-completion-reconciliation.md` §2 for the full matrix.
+
+## Narrowed by ADR-0019 (2026-09-21)
+
+Still Accepted, and still correct about the guard it considered — a per-subject
+`entity_version = <the subject's current version>` guard does need a graph read
+the deterministic core does not do. What this candidate got too narrow was the
+premise that a version match is the *only* per-subject guard an
+`ATTACH_ASSERTION` could carry.
+
+[ADR-0019](../0019-attach-assertion-absence-precondition.md) supplies the guard
+that needs no read: an `assertion_absent` precondition naming the subject and
+the `assertion_id` the operation would mint — read-free precisely because the
+planner minted that id. So "attach operations carry the plan-level snapshot
+guard but no per-subject version guard" remains true as written; "no per-subject
+guard at all" no longer is. Option 2 above (stamping an observed
+`entity_version` from the read-capable resolution plane) stays open for genuine
+subject-level optimistic concurrency, which is a different problem from replay.

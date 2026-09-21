@@ -6,14 +6,27 @@ proven to apply to in Wave 0.
 """
 
 from datetime import UTC, datetime
+from typing import Sequence
 
 import pytest
 from kg_contracts.candidates import CandidateScores
-from kg_contracts.curation import CurationOperation, CurationOperationType, CurationPlan
+from kg_contracts.curation import (
+    CurationOperation,
+    CurationOperationType,
+    CurationPlan,
+    Precondition,
+)
+from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+from kg_contracts.stores import (
+    CommitResult,
+    GraphMutationBatch,
+    GraphReader,
+    GraphReadOptions,
+)
 from kg_contracts.testing.factories import make_attribute_candidate, make_entity_candidate
 from kg_contracts.testing.memory import MemoryGraphStore
 
-from helpers import GRAPH_ID
+from helpers import GRAPH_ID, known_identity
 from kgcs import (
     INVERSE_PAYLOAD_KEY,
     CurationEngine,
@@ -167,6 +180,172 @@ class TestStalePlan:
         record = PlanExecutor(store, clock=clock).execute(plan)
         assert record.outcome is ExecutionOutcome.STALE
         assert any(p.kind == "snapshot_version" for p in record.failed_preconditions)
+
+
+class TestAttachReplay:
+    """ADR-0019: an `ATTACH_ASSERTION` carries its own per-subject guard.
+
+    The snapshot guard alone only refuses an *unmodified* replay of a committed
+    plan. Re-planning the same candidate against the graph's current snapshot
+    satisfies it, which is the hole these tests pin shut — while leaving
+    re-assertion of the same fact from a new candidate (new evidence) open.
+    """
+
+    @staticmethod
+    def _attach_plan_at(
+        engine_clock: FixedClock, candidate: object, snapshot: str
+    ) -> CurationPlan:
+        """Plan one candidate against an explicit snapshot version."""
+        engine = CurationEngine.create(
+            graph_id=GRAPH_ID, clock=engine_clock, snapshot_version=snapshot
+        )
+        result = engine.curate([candidate])  # type: ignore[list-item]
+        assert result.plan is not None, "fixture broken: no plan to execute"
+        attach_ops = [
+            op
+            for op in result.plan.operations
+            if op.type is CurationOperationType.ATTACH_ASSERTION
+        ]
+        # Non-vacuity: a replay test that plans zero attach operations would
+        # pass no matter what the executor does.
+        assert attach_ops, "fixture broken: no ATTACH_ASSERTION operation planned"
+        return result.plan
+
+    def test_replanned_attach_against_the_current_snapshot_is_refused(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        candidate = make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+
+        first = self._attach_plan_at(clock, candidate, "0")
+        subject = str(first.operations[0].payload["subject_identity"])
+        assertion_id = str(first.operations[0].payload["assertion_id"])
+        assert executor.execute(first).outcome is ExecutionOutcome.COMMITTED
+
+        # Re-plan the SAME candidate against the snapshot the graph is now at,
+        # so the plan-level snapshot guard is satisfied and cannot be what
+        # refuses the replay.
+        replay = self._attach_plan_at(clock, candidate, str(store.current_epoch()))
+        record = executor.execute(replay)
+
+        assert record.outcome is ExecutionOutcome.STALE
+        assert not [p for p in record.failed_preconditions if p.kind == "snapshot_version"]
+        assert [
+            (p.subject, p.expected)
+            for p in record.failed_preconditions
+            if p.kind == "assertion_absent"
+        ] == [(subject, assertion_id)]
+        # Canonical state holds the assertion once, by identity — not merely a
+        # count that happens to be one.
+        attached = store.assertions_for(subject)
+        assert [a.assertion_id for a in attached] == [assertion_id]
+        assert store.current_epoch() == 1
+
+    def test_reassertion_from_a_new_candidate_with_new_evidence_still_applies(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # Release-critical downstream: the same fact re-attached later with NEW
+        # evidence is a distinct candidate, mints a distinct assertion id, and
+        # must still apply. The replay guard must not foreclose it.
+        subject = known_identity()
+        first_evidence = (
+            EvidenceRef(evidence_id="ev_first", relationship=EvidenceRelationship.SUPPORTS),
+        )
+        later_evidence = (
+            EvidenceRef(evidence_id="ev_later", relationship=EvidenceRelationship.SUPPORTS),
+        )
+        original = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", value=200,
+            scores=auto_scores,
+        ).model_copy(update={"evidence_refs": first_evidence})
+        corroborating = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", value=200,
+            scores=auto_scores,
+        ).model_copy(update={"evidence_refs": later_evidence})
+        assert original.candidate_id != corroborating.candidate_id
+
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+
+        plan_a = self._attach_plan_at(clock, original, "0")
+        assert executor.execute(plan_a).outcome is ExecutionOutcome.COMMITTED
+        plan_b = self._attach_plan_at(clock, corroborating, str(store.current_epoch()))
+        second = executor.execute(plan_b)
+
+        assert second.outcome is ExecutionOutcome.COMMITTED, (
+            f"re-assertion with new evidence was refused: {second.failed_preconditions}"
+        )
+        attached = store.assertions_for(subject)
+        assert len(set(a.assertion_id for a in attached)) == 2  # two distinct records
+        assert {ref.evidence_id for a in attached for ref in a.evidence_refs} == {
+            "ev_first",
+            "ev_later",
+        }
+        assert store.current_epoch() == 2
+
+    def test_a_superseded_assertion_still_blocks_a_replay_of_its_id(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # Supersession marks a record, it never deletes it. A default canonical
+        # read hides SUPERSEDED rows, so an absence check that forgot
+        # `include_superseded` would read "absent" and wave the replay through.
+        candidate = make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+
+        first = self._attach_plan_at(clock, candidate, "0")
+        subject = str(first.operations[0].payload["subject_identity"])
+        assertion_id = str(first.operations[0].payload["assertion_id"])
+        assert executor.execute(first).outcome is ExecutionOutcome.COMMITTED
+        store.mark_superseded(assertion_id, clock.now())
+        assert store.assertions_for(subject) == []  # invisible to a default read
+
+        replay = self._attach_plan_at(clock, candidate, str(store.current_epoch()))
+        record = executor.execute(replay)
+
+        assert record.outcome is ExecutionOutcome.STALE
+        assert any(p.kind == "assertion_absent" for p in record.failed_preconditions)
+        visible = store.assertions_for(subject, GraphReadOptions(include_superseded=True))
+        assert [a.assertion_id for a in visible] == [assertion_id]
+
+    def test_without_a_reader_the_attach_guard_is_unenforceable(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # The documented residual limit, pinned rather than left silent: both
+        # executor-enforced guards need a `GraphReader`. Over a write-only
+        # store the executor has nothing to check them against, and the
+        # reference precondition contract passes every non-`entity_version`
+        # kind, so the replay commits.
+        candidate = make_attribute_candidate(graph_id=GRAPH_ID, scores=auto_scores)
+        store = _WriteOnlyStore()
+        assert not isinstance(store, GraphReader)
+        executor = PlanExecutor(store, clock=clock)
+
+        plan = self._attach_plan_at(clock, candidate, "0")
+        assert executor.execute(plan).outcome is ExecutionOutcome.COMMITTED
+        assert executor.execute(plan).outcome is ExecutionOutcome.COMMITTED
+        assert store.applied == 2
+
+
+class _WriteOnlyStore:
+    """A `GraphMutationStore` that is deliberately not a `GraphReader`.
+
+    Mirrors the reference adapter's precondition contract — only
+    `entity_version` is enforced, every other kind passes — so the only
+    difference from `MemoryGraphStore` under test is the missing read surface.
+    """
+
+    def __init__(self) -> None:
+        self.applied = 0
+        self._epoch = 0
+
+    def apply(
+        self, batch: GraphMutationBatch, preconditions: Sequence[Precondition]
+    ) -> CommitResult:
+        self.applied += 1
+        self._epoch += 1
+        return CommitResult(batch_id=batch.batch_id, committed=True, new_epoch=self._epoch)
 
 
 class TestUnsupportedOperations:

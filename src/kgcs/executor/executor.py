@@ -25,19 +25,37 @@ Four properties the executor guarantees, each an invariant test:
   `NotImplementedError` escape. A defensive catch backstops adapters whose
   real support is narrower than declared.
 - **Idempotent replay.** Re-executing a committed plan is rejected `STALE`,
-  not applied a second time. Two guards combine: a `CREATE_IDENTITY` carries an
-  `entity_version=0` precondition the *store* enforces (it fails once the
-  identity exists), and — because the reference store enforces only
-  `entity_version` and the deterministic core emits no per-subject guard for an
-  `ATTACH_ASSERTION` (ADR candidate 0003) — the **executor itself** enforces
-  the plan-level `snapshot_version` precondition against the graph's current
-  epoch when it has a `GraphReader` (the executor may read; it is not
-  application-facing). A plan computed against epoch *N* only applies while the
-  graph is still at *N*; the first commit advances the epoch, so any replay —
-  create or attach — is `STALE`. This is ADR-0003 option 1, realized here
-  rather than by mutating the frozen contract. Callers that pass the real
-  snapshot they planned against get true optimistic concurrency; the default
-  `snapshot_version="0"` gives single-use-against-a-virgin-graph semantics.
+  not applied a second time, and so is a *re-planned* replay of the same
+  candidates against the graph's current snapshot. Three guards combine, two of
+  them per-subject and enforced here:
+
+  - a `CREATE_IDENTITY` carries an `entity_version=0` precondition the *store*
+    enforces (it fails once the identity exists);
+  - an `ATTACH_ASSERTION` carries an `assertion_absent` precondition naming its
+    subject and the assertion id it would mint. The reference store ignores
+    every kind but `entity_version`, so the **executor** enforces this one, by
+    reading the subject's assertions through its `GraphReader` (the executor
+    may read; it is not application-facing). Superseded assertions count as
+    present — supersession is not deletion, so a superseded record still makes
+    a re-attach of that same id a replay (ADR-0019);
+  - the plan-level `snapshot_version` precondition, likewise enforced here
+    against the graph's current epoch. A plan computed against epoch *N* only
+    applies while the graph is still at *N*, so an unmodified replay of a
+    committed plan is `STALE` on the snapshot alone. This is ADR-0003 option 1,
+    realized here rather than by mutating the frozen contract.
+
+  The snapshot guard alone is not enough: re-planning the same candidates
+  against the *current* snapshot satisfies it, and before ADR-0019 that
+  re-attached a byte-identical assertion — the same `assertion_id` twice on one
+  subject — while the same replay of a `CREATE_IDENTITY` was correctly refused.
+  Callers that pass the real snapshot they planned against get true optimistic
+  concurrency; the default `snapshot_version="0"` gives
+  single-use-against-a-virgin-graph semantics.
+
+  Both executor-enforced guards need a reader. Constructed over a store that is
+  neither a `GraphReader` nor paired with one, the executor has nothing to
+  check them against and leaves them to the store — which, for the reference
+  adapter's precondition contract, means they are not enforced at all.
 
 Every attempt — committed, stale, unsupported, empty, errored, and every
 compensation execution — is recorded as a KGCS-local `ExecutionRecord`. That
@@ -58,12 +76,13 @@ from kg_contracts.stores import (
     GraphMutationBatch,
     GraphMutationStore,
     GraphReader,
+    GraphReadOptions,
 )
 from pydantic import BaseModel, ConfigDict
 
 from kgcs.clock import Clock, SystemClock
 from kgcs.ids import DerivedIdFactory, IdFactory
-from kgcs.planner import SNAPSHOT_PRECONDITION_KIND
+from kgcs.planner import ASSERTION_ABSENT_PRECONDITION_KIND, SNAPSHOT_PRECONDITION_KIND
 
 DEFAULT_EXECUTED_BY = "kgcs.executor/auto"
 
@@ -265,9 +284,10 @@ class PlanExecutor:
                 )
             )
 
-        stale = self._stale_snapshot_preconditions(plan)
+        stale = self._unmet_preconditions(plan)
         if stale:
-            # The plan was computed against a snapshot the graph has moved past.
+            # Either the plan was computed against a snapshot the graph has
+            # moved past, or a record it would mint is already there (a replay).
             # Reject before touching the store — re-evaluate, never blind-retry.
             return self._finish(
                 self._record(
@@ -330,22 +350,50 @@ class PlanExecutor:
 
     # --- internals ------------------------------------------------------------
 
-    def _stale_snapshot_preconditions(self, plan: CurationPlan) -> tuple[Precondition, ...]:
-        """Plan-level snapshot guards the graph has already moved past.
+    def _unmet_preconditions(self, plan: CurationPlan) -> tuple[Precondition, ...]:
+        """The plan's guards the graph does not satisfy, in plan order.
 
         Enforced by the executor because the reference `GraphMutationStore`
-        checks only `entity_version` preconditions. Returns the empty tuple
-        when no reader is available (nothing the executor can enforce) or when
-        every snapshot guard matches the graph's current epoch.
+        checks only `entity_version` preconditions and silently passes every
+        other kind. Two kinds are checked here:
+
+        - `snapshot_version` — the plan was computed against a graph epoch the
+          store has already moved past;
+        - `assertion_absent` — the assertion this plan would mint is already on
+          its subject, i.e. this is a replay (ADR-0019).
+
+        `entity_version` is deliberately *not* re-checked here: the store owns
+        that counter and enforces it itself. Returns the empty tuple when no
+        reader is available — nothing the executor can check — or when every
+        guard it can check holds.
         """
         if self._reader is None:
             return ()
-        actual = str(self._reader.current_epoch())
-        return tuple(
-            p
-            for p in plan.preconditions
-            if p.kind == SNAPSHOT_PRECONDITION_KIND and p.expected != actual
+        epoch = str(self._reader.current_epoch())
+        unmet: list[Precondition] = []
+        for p in plan.preconditions:
+            if p.kind == SNAPSHOT_PRECONDITION_KIND:
+                if p.expected != epoch:
+                    unmet.append(p)
+            elif p.kind == ASSERTION_ABSENT_PRECONDITION_KIND:
+                if self._assertion_present(p.subject, p.expected):
+                    unmet.append(p)
+        return tuple(unmet)
+
+    def _assertion_present(self, subject_identity: str, assertion_id: str) -> bool:
+        """True iff `assertion_id` is already attached to `subject_identity`.
+
+        `include_superseded=True` is load-bearing: supersession marks a record,
+        it never deletes it (governance principle 5), and the default canonical
+        read hides superseded records. Without the flag, re-attaching the same
+        assertion id after its record was superseded would read as "absent" and
+        the replay would be waved through.
+        """
+        assert self._reader is not None  # only reached from _unmet_preconditions
+        existing = self._reader.assertions_for(
+            subject_identity, GraphReadOptions(include_superseded=True)
         )
+        return any(a.assertion_id == assertion_id for a in existing)
 
     @staticmethod
     def _classify(
