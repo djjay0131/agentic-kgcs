@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 import pytest
 from kg_contracts.assertions import Assertion, ConflictStatus, CurationStatus
 from kg_contracts.curation import CurationOperationType, CurationPlan
-from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+from kg_contracts.evidence import EvidenceRef, EvidenceRelationship, Provenance
 from kg_contracts.identity import new_identity_id
 from kg_contracts.testing.factories import make_assertion, make_entity_candidate
 
@@ -502,3 +502,65 @@ class TestNextRecord:
         retract = result.plan.operations[1]
         assert retract.payload["assertion_id"] == prior.assertion_id
         assert retract.payload["superseded_by"] == successor.assertion_id
+
+
+class TestNextRecordRePointsTheOrigin:
+    """ADR-0021 as revised: the re-curation analogue of the B1 gap.
+
+    A caller holding a committed record and a *second source* for the same
+    fact — with no evidence refs to offer, because its producer keeps evidence
+    in a side registry — must still be able to mint a successor.
+    """
+
+    @staticmethod
+    def _prior(subject: str) -> Assertion:
+        return _assertion("as_prior", subject=subject).model_copy(
+            update={
+                "evidence_refs": (),
+                "authority": "producer_alpha",
+                "provenance": Provenance(
+                    source="csv", source_ref="s3://a.csv", actor="producer_alpha"
+                ),
+                "recorded_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+        )
+
+    def test_a_new_origin_alone_mints_a_new_record_of_the_same_fact(self) -> None:
+        prior = self._prior(new_identity_id(GRAPH))
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+            provenance=Provenance(
+                source="csv", source_ref="s3://b.csv", actor="producer_beta"
+            ),
+            authority="producer_beta",
+        )
+        assert successor.assertion_id != prior.assertion_id
+        assert assertion_fact_key(successor) == assertion_fact_key(prior)
+        assert successor.provenance.source_ref == "s3://b.csv"
+        assert successor.authority == "producer_beta"
+
+    def test_the_prior_origin_is_kept_when_none_is_supplied(self) -> None:
+        prior = self._prior(new_identity_id(GRAPH))
+        successor = _planner().next_record(
+            prior,
+            evidence_refs=(
+                EvidenceRef(evidence_id="ev_b", relationship=EvidenceRelationship.SUPPORTS),
+            ),
+            recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+        assert successor.provenance == prior.provenance
+        assert successor.authority == prior.authority
+
+    def test_the_same_origin_and_the_same_evidence_is_still_a_replay(self) -> None:
+        """The refusal must not be weakened by the new parameter: re-stating
+        the origin the record already has changes nothing."""
+        prior = self._prior(new_identity_id(GRAPH))
+        with pytest.raises(ValueError, match="nothing record-distinguishing"):
+            _planner().next_record(
+                prior,
+                evidence_refs=(),
+                recorded_at=datetime(2026, 9, 1, tzinfo=UTC),
+                provenance=prior.provenance,
+            )

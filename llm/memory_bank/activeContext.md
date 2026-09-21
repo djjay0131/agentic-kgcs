@@ -30,13 +30,34 @@ the round trip and reads it back by identity — both records present, the live
 read showing the latest, the prior reachable with `include_superseded=True`
 still citing its own evidence.
 
-**Open for the owner:** existing graphs hold ids minted under the old seed, so
-the first re-plan after this change attaches a second `ACTIVE` record rather
-than being refused by ADR-0019's `assertion_absent` guard. Needs a backfill or
-an epoch boundary — see ADR-0021 §Risks. Also: PR #36's
-`test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence`
-asserts the behaviour this change deliberately reverses; whichever merges
-second must update it.
+**Revision 2 (after independent adversarial review R21, REQUEST CHANGES).**
+Two blockers, both closed in code and in the ADR rather than by softening the
+prose:
+
+- **B1** — the first draft keyed the record on evidence alone and therefore
+  **did not reach the structured/tabular producer at all**: KGIS links
+  structured evidence into a side registry and never populates
+  `Candidate.evidence_refs`, so the seed's evidence component was a constant
+  `[]` there and route 2's overwrite survived on the release-critical
+  criterion. The seed now also reads the **origin**
+  (`provenance.source`/`source_ref`) — the same key
+  `kgis.structured.evidence.source_evidence_id` uses — while the *processor*
+  (`actor`/`model`/`prompt_version`/`authority`) stays out. Fixes the
+  traceability regression with it.
+- **B2** — the rejection of the zero-migration Alternative 2 rested on five
+  "frozen contract" sites of which only **two** are real (`superseded_by` does
+  not exist in `kg_contracts` at all). Rewritten honestly, resting on
+  `testing/contract.py`'s 21 references and the per-adapter version-chain cost.
+
+Migration is now a **stated procedure**: `records.backfill_record_id()`
+recomputes the new id from the committed row, so it is one offline pass —
+with the non-injectivity (merge, never rename) and the reference rewriting
+both stated and pinned. Also fixed: a `default=str` determinism hazard in the
+seed (now refuses an unrenderable `object_value`), and two producer
+obligations are now stated rather than assumed.
+
+**Merge order decided: #36 first, then this rebases** and carries the rewrite
+of **three** of #36's tests (not one). #36's F1 guard stays reachable.
 
 
 

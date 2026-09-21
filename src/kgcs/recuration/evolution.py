@@ -68,7 +68,7 @@ from kg_contracts.curation import (
     CurationPlan,
     Precondition,
 )
-from kg_contracts.evidence import EvidenceRef, ValidPeriod
+from kg_contracts.evidence import EvidenceRef, Provenance, ValidPeriod
 
 from kgcs.er.cluster import select_survivor
 from kgcs.er.normalize import NormalizedEntity
@@ -380,6 +380,8 @@ class ConceptEvolutionPlanner:
         object_value: object | None = _UNCHANGED,
         object_identity: str | None = _UNCHANGED,
         valid_period: ValidPeriod | None = None,
+        provenance: Provenance | None = None,
+        authority: str | None = None,
         trace_id: str | None = None,
     ) -> Assertion:
         """The **next record of the same fact** as `prior`, with a fresh id.
@@ -397,12 +399,20 @@ class ConceptEvolutionPlanner:
         cleared and `curation_epoch=0` (the executor stamps the real epoch at
         apply time, exactly as a planned assertion does).
 
+        `provenance` re-points the successor at a **different origin** — the
+        second source of a fact whose producer leaves `evidence_refs` empty.
+        It is record-distinguishing (ADR-0021), so supplying it alone is
+        enough to mint a successor; `authority` travels with it because the
+        two answer the same question and a record whose origin moved while its
+        authority did not is a record that lies about who is asserting it.
+        Neither is in the seed's *processor* half — see `kgcs.records`.
+
         Raises `ValueError` if nothing record-distinguishing actually changed:
-        same object, same valid period, same evidence in the same order is a
-        **replay**, not new knowledge, and minting a second id for it would
-        put two identical records of one fact in the graph. That refusal is
-        the point — it is the boundary between corroboration with new evidence
-        and a duplicate.
+        same object, same valid period, same origin, same evidence in the same
+        order is a **replay**, not new knowledge, and minting a second id for
+        it would put two identical records of one fact in the graph. That
+        refusal is the point — it is the boundary between corroboration with
+        new evidence and a duplicate.
         """
         successor = prior.model_copy(
             update={
@@ -418,6 +428,8 @@ class ConceptEvolutionPlanner:
                     prior.valid_period if valid_period is None else valid_period
                 ),
                 "evidence_refs": tuple(evidence_refs),
+                "provenance": prior.provenance if provenance is None else provenance,
+                "authority": prior.authority if authority is None else authority,
                 "recorded_at": recorded_at,
                 "status": CurationStatus.ACTIVE,
                 "superseded_at": None,

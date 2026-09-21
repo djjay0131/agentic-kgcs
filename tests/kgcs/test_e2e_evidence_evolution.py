@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 
 import pytest
 from kg_contracts.assertions import Assertion, CurationStatus
-from kg_contracts.candidates import AttributeAssertionCandidate
+from kg_contracts.candidates import AttributeAssertionCandidate, SourceCoordinates
 from kg_contracts.curation import CurationPlan
 from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
 from kg_contracts.stores import GraphReadOptions
@@ -301,10 +301,16 @@ class TestEvidenceEvolutionRoundTrip:
             assert executor.execute(result.plan).outcome is ExecutionOutcome.COMMITTED
             chain.append(successor)
 
-        history = _by_id(
-            store.assertions_for(subject, GraphReadOptions(include_superseded=True))
+        history_rows = store.assertions_for(
+            subject, GraphReadOptions(include_superseded=True)
         )
-        assert set(history) == {record.assertion_id for record in chain}
+        history = _by_id(history_rows)
+        chain_ids = [record.assertion_id for record in chain]
+        # Four DISTINCT record ids, asserted before the set comparison: a set
+        # equality would silently absorb two chain entries sharing an id, which
+        # is the very defect this file exists to catch, inverted.
+        assert len(set(chain_ids)) == len(chain_ids) == 4
+        assert sorted(a.assertion_id for a in history_rows) == sorted(chain_ids)
         assert [_evidence_of(history[r.assertion_id]) for r in chain] == [
             ["ev_A"],
             ["ev_B"],
@@ -317,12 +323,115 @@ class TestEvidenceEvolutionRoundTrip:
             CurationStatus.SUPERSEDED
         ] * 3
 
-    def test_a_replay_of_the_committed_record_is_not_a_second_record(
+    def test_a_replay_of_the_committed_record_is_the_same_record(
         self, graph: tuple[E2EGraphStore, PlanExecutor, str, Assertion]
     ) -> None:
         """The boundary. Re-planning the SAME candidate with the SAME evidence
         must still mint the same record id, or the fix would have traded one
-        silent duplication for another."""
-        store, _executor, subject, record_a = graph
+        silent duplication for another.
+
+        Executed and read back, not merely planned: the id is what ADR-0019's
+        `assertion_absent` guard keys on, and that guard is not on this branch,
+        so what this test can show *here* is that an upsert-by-id adapter ends
+        with ONE record rather than two. It is deliberately NOT named "is not a
+        second record" — on the append-semantics reference store a replay still
+        lands a second row under one id. ADR-0021 §What this does NOT fix
+        states where the containment actually comes from.
+        """
+        store, executor, subject, record_a = graph
         replayed = _plan_for(_candidate(subject, "ev_A"), str(store.current_epoch()))
         assert replayed.operations[0].payload["assertion_id"] == record_a.assertion_id
+        assert executor.execute(replayed).outcome is ExecutionOutcome.COMMITTED
+        live = _by_id(store.assertions_for(subject))
+        assert set(live) == {record_a.assertion_id}
+        assert _evidence_of(live[record_a.assertion_id]) == ["ev_A"]
+
+
+class TestTheFixReachesAProducerWithNoEvidenceRefs:
+    """B1: KGIS's structured/tabular producer never populates `evidence_refs`.
+
+    It links evidence into a side SQLite registry keyed by `candidate_id`
+    (`kgis/structured/evidence.py`), so for every structured candidate the
+    seed's evidence component is the constant `[]`. Keying the record on
+    evidence alone therefore left that producer — and the release-critical
+    criterion on it — exactly where it was: one id, in-place overwrite, the
+    first source's authority, provenance and trace_id destroyed.
+
+    The origin closes it, and closes it with the *same* key the producer itself
+    uses: `kgis.structured.evidence.source_evidence_id` derives the registry's
+    evidence id from the coordinates. On that path the coordinates ARE the
+    evidence identity.
+    """
+
+    @staticmethod
+    def _structured(subject: str, *, producer: str, locator: str) -> AttributeAssertionCandidate:
+        """A structured candidate: one fixed candidate id, NO evidence_refs."""
+        candidate = make_attribute_candidate(
+            graph_id=GRAPH_ID,
+            subject=subject,
+            attribute=ATTRIBUTE,
+            value=VALUE,
+            scores=make_scores(
+                extraction_confidence=1.0, source_reliability=AUTO_SOURCE_RELIABILITY
+            ),
+            source_coordinates=SourceCoordinates(
+                source_type="csv", locator=locator, fragment="id=7"
+            ),
+        )
+        return candidate.model_copy(  # type: ignore[return-value]
+            update={
+                "candidate_id": "cand_structured_FIXED",
+                "producer": producer,
+                "trace_id": f"trace_{producer}",
+                "created_at": T0,
+                "evidence_refs": (),
+            }
+        )
+
+    def test_two_structured_sources_of_one_fact_are_two_records(
+        self, graph: tuple[E2EGraphStore, PlanExecutor, str, Assertion]
+    ) -> None:
+        store, executor, subject, _record_a = graph
+        first = self._structured(subject, producer="producer_alpha", locator="s3://a.csv")
+        second = self._structured(subject, producer="producer_beta", locator="s3://b.csv")
+        assert first.evidence_refs == (), "fixture broken: this path must carry no evidence"
+        assert first.candidate_id == second.candidate_id, "fixture broken: not one candidate"
+
+        plan_one = _plan_for(first, str(store.current_epoch()))
+        assert executor.execute(plan_one).outcome is ExecutionOutcome.COMMITTED
+        id_one = str(plan_one.operations[0].payload["assertion_id"])
+
+        plan_two = _plan_for(second, str(store.current_epoch()))
+        id_two = str(plan_two.operations[0].payload["assertion_id"])
+        assert id_two != id_one
+        assert executor.execute(plan_two).outcome is ExecutionOutcome.COMMITTED
+
+        rows = _by_id(store.assertions_for(subject, GraphReadOptions(include_superseded=True)))
+        assert {id_one, id_two} <= set(rows)
+        # The first source's traceability SURVIVES — it used to be overwritten.
+        assert rows[id_one].authority == "producer_alpha"
+        assert rows[id_one].provenance.source_ref == "s3://a.csv"
+        assert rows[id_one].trace_id == "trace_producer_alpha"
+        assert rows[id_two].authority == "producer_beta"
+
+    def test_a_structured_replay_is_still_one_record(
+        self, graph: tuple[E2EGraphStore, PlanExecutor, str, Assertion]
+    ) -> None:
+        """The other half: the origin must not turn a re-ingest of the SAME
+        source row into a new record, or the fix would duplicate every
+        structured fact on every run."""
+        store, executor, subject, _record_a = graph
+        candidate = self._structured(subject, producer="producer_alpha", locator="s3://a.csv")
+        first = _plan_for(candidate, str(store.current_epoch()))
+        assert executor.execute(first).outcome is ExecutionOutcome.COMMITTED
+        id_one = str(first.operations[0].payload["assertion_id"])
+
+        replay = _plan_for(
+            self._structured(subject, producer="producer_alpha", locator="s3://a.csv"),
+            str(store.current_epoch()),
+        )
+        assert str(replay.operations[0].payload["assertion_id"]) == id_one
+        assert executor.execute(replay).outcome is ExecutionOutcome.COMMITTED
+        live = _by_id(store.assertions_for(subject))
+        assert id_one in live
+        assert live[id_one].provenance.source_ref == "s3://a.csv"
