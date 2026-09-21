@@ -418,17 +418,36 @@ class CurationPlanner:
 def assertion_absent_guard(
     subject_identity: str, assertion_id: str
 ) -> Precondition:
-    """The `assertion_absent` guard for one attach (ADR-0019).
+    """Build the `assertion_absent` guard for one attach (ADR-0019).
 
-    One constructor so every producer of an `ATTACH_ASSERTION` — and the
-    executor that enforces the guard — agrees on which field holds the subject
-    and which holds the assertion id, rather than each re-deciding.
+    Paired with `read_assertion_absent_guard`: between them they are the only
+    two places that decide which `Precondition` field holds the subject and
+    which holds the assertion id. Writers call this, the enforcing executor
+    calls the reader, and neither re-derives the field roles positionally —
+    which is what makes "producers and the enforcer cannot disagree" a fact
+    about the code rather than a hope.
     """
     return Precondition(
         kind=ASSERTION_ABSENT_PRECONDITION_KIND,
         subject=subject_identity,
         expected=assertion_id,
     )
+
+
+def read_assertion_absent_guard(precondition: Precondition) -> tuple[str, str]:
+    """Read an `assertion_absent` guard back as `(subject_identity, assertion_id)`.
+
+    The inverse of `assertion_absent_guard`, and the only supported way to
+    interpret one. Raises `ValueError` for any other kind, so a caller cannot
+    quietly read a `snapshot_version` or `entity_version` guard through it and
+    get a plausible-looking pair of strings back.
+    """
+    if precondition.kind != ASSERTION_ABSENT_PRECONDITION_KIND:
+        raise ValueError(
+            f"not an {ASSERTION_ABSENT_PRECONDITION_KIND} precondition: "
+            f"kind={precondition.kind!r}"
+        )
+    return precondition.subject, precondition.expected
 
 
 def _assertion_absent_guard(operation: CurationOperation) -> Precondition | None:

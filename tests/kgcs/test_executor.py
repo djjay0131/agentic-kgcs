@@ -242,12 +242,16 @@ class TestAttachReplay:
         assert [a.assertion_id for a in attached] == [assertion_id]
         assert store.current_epoch() == 1
 
-    def test_reassertion_from_a_new_candidate_with_new_evidence_still_applies(
+    def test_reassertion_from_a_distinct_candidate_still_applies(
         self, auto_scores: CandidateScores, clock: FixedClock
     ) -> None:
-        # Release-critical downstream: the same fact re-attached later with NEW
-        # evidence is a distinct candidate, mints a distinct assertion id, and
-        # must still apply. The replay guard must not foreclose it.
+        # Release-critical downstream, stated precisely: the causal input is
+        # the *candidate id*, not the evidence. `assertion_id` derives from
+        # `candidate_id` alone, so a re-assertion lands iff the producer minted
+        # a new candidate id for it. Carrying new evidence is what makes this
+        # case worth having; it is not what makes it commit. The companion
+        # test below pins the other half — same candidate id, new evidence,
+        # refused — so neither test can be read as promising more than it does.
         subject = known_identity()
         first_evidence = (
             EvidenceRef(evidence_id="ev_first", relationship=EvidenceRelationship.SUPPORTS),
@@ -274,7 +278,8 @@ class TestAttachReplay:
         second = executor.execute(plan_b)
 
         assert second.outcome is ExecutionOutcome.COMMITTED, (
-            f"re-assertion with new evidence was refused: {second.failed_preconditions}"
+            f"re-assertion from a distinct candidate was refused: "
+            f"{second.failed_preconditions}"
         )
         attached = store.assertions_for(subject)
         assert len(set(a.assertion_id for a in attached)) == 2  # two distinct records
@@ -283,6 +288,129 @@ class TestAttachReplay:
             "ev_later",
         }
         assert store.current_epoch() == 2
+        # The chain the commit actually rests on, asserted rather than implied:
+        # distinct candidate ids produced the distinct assertion ids, and it is
+        # the assertion id the guard names.
+        assert {str(op.payload["assertion_id"]) for op in plan_a.operations} != {
+            str(op.payload["assertion_id"]) for op in plan_b.operations
+        }
+        assert [p.expected for p in plan_b.preconditions if p.kind == "assertion_absent"] == [
+            str(plan_b.operations[0].payload["assertion_id"])
+        ]
+
+    def test_reassertion_under_the_same_candidate_id_is_refused_and_drops_the_evidence(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # The caller contract, as an executing fact rather than a sentence in
+        # an ADR. `agentic-kg` mints candidate_id from
+        # (graph_id, kind, semantic_key) with evidence NOT an input, so for it
+        # "the same fact with new evidence" is the SAME candidate id. That is
+        # refused, and the new evidence does not land. Loudly — a named failed
+        # precondition, not a silent drop — but a producer that wants evidence
+        # evolution must mint a new candidate id for it.
+        subject = known_identity()
+        first = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, scores=auto_scores
+        ).model_copy(
+            update={
+                "evidence_refs": (
+                    EvidenceRef(evidence_id="ev_1", relationship=EvidenceRelationship.SUPPORTS),
+                )
+            }
+        )
+        # Same candidate, more evidence — exactly what an evidence-independent
+        # id scheme produces on a re-run.
+        enriched = first.model_copy(
+            update={
+                "evidence_refs": (
+                    EvidenceRef(evidence_id="ev_1", relationship=EvidenceRelationship.SUPPORTS),
+                    EvidenceRef(evidence_id="ev_2", relationship=EvidenceRelationship.SUPPORTS),
+                )
+            }
+        )
+        assert enriched.candidate_id == first.candidate_id
+        assert enriched.evidence_refs != first.evidence_refs
+
+        store = MemoryGraphStore()
+        executor = PlanExecutor(store, clock=clock)
+        assert (
+            executor.execute(self._attach_plan_at(clock, first, "0")).outcome
+            is ExecutionOutcome.COMMITTED
+        )
+        record = executor.execute(
+            self._attach_plan_at(clock, enriched, str(store.current_epoch()))
+        )
+
+        assert record.outcome is ExecutionOutcome.STALE
+        assert any(p.kind == "assertion_absent" for p in record.failed_preconditions)
+        # The refusal is the whole point, and so is its cost: ev_2 never lands.
+        in_graph = {
+            ref.evidence_id for a in store.assertions_for(subject) for ref in a.evidence_refs
+        }
+        assert in_graph == {"ev_1"}
+
+    def test_a_plan_that_mints_one_assertion_id_twice_is_refused_as_error(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # F1: the guards are evaluated once, before apply, so two attaches
+        # minting one assertion_id INSIDE one plan both saw "absent" and both
+        # landed — two rows under one id, the exact corruption the guard
+        # exists to prevent, reached from inside a single plan.
+        subject = known_identity()
+        one = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", value=200,
+            scores=auto_scores,
+        )
+        # A second, DIFFERENT fact forced under the same candidate id — what an
+        # evidence-independent or colliding id scheme can produce.
+        two = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="width_cm", value=300,
+            scores=auto_scores,
+        ).model_copy(update={"candidate_id": one.candidate_id})
+
+        engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
+        plan = engine.curate([one, two]).plan
+        assert plan is not None
+        # Non-vacuity: the plan really does carry two attaches naming one id.
+        minted = [str(op.payload["assertion_id"]) for op in plan.operations]
+        assert len(minted) == 2 and len(set(minted)) == 1
+
+        store = MemoryGraphStore()
+        record = PlanExecutor(store, clock=clock).execute(plan)
+
+        # ERROR, not STALE: re-evaluating the graph can never make this plan
+        # applicable, so the caller must not be told to retry.
+        assert record.outcome is ExecutionOutcome.ERROR
+        assert record.error is not None and minted[0] in record.error
+        # Both guards are named, not just the second.
+        assert len(record.failed_preconditions) == 2
+        assert {p.expected for p in record.failed_preconditions} == {minted[0]}
+        # Store untouched — nothing partially applied.
+        assert store.current_epoch() == 0
+        assert store.assertions_for(subject, GraphReadOptions(include_superseded=True)) == []
+
+    def test_the_self_conflict_check_needs_no_reader(
+        self, auto_scores: CandidateScores, clock: FixedClock
+    ) -> None:
+        # Unlike the snapshot and absence guards, this one is a property of the
+        # plan alone, so it still holds over a write-only store — the one place
+        # the other two are unenforceable.
+        subject = known_identity()
+        one = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="height_cm", scores=auto_scores
+        )
+        two = make_attribute_candidate(
+            graph_id=GRAPH_ID, subject=subject, attribute="width_cm", scores=auto_scores
+        ).model_copy(update={"candidate_id": one.candidate_id})
+        engine = CurationEngine.create(graph_id=GRAPH_ID, clock=clock, snapshot_version="0")
+        plan = engine.curate([one, two]).plan
+        assert plan is not None
+
+        store = _WriteOnlyStore()
+        record = PlanExecutor(store, clock=clock).execute(plan)
+
+        assert record.outcome is ExecutionOutcome.ERROR
+        assert store.applied == 0  # never reached the store
 
     def test_a_superseded_assertion_still_blocks_a_replay_of_its_id(
         self, auto_scores: CandidateScores, clock: FixedClock
@@ -331,9 +459,12 @@ class TestAttachReplay:
 class _WriteOnlyStore:
     """A `GraphMutationStore` that is deliberately not a `GraphReader`.
 
-    Mirrors the reference adapter's precondition contract — only
-    `entity_version` is enforced, every other kind passes — so the only
-    difference from `MemoryGraphStore` under test is the missing read surface.
+    It enforces **no** preconditions at all, which is the permissive end of
+    what the `GraphMutationStore` contract allows and therefore the right
+    double for "the executor is the only thing that could have refused this".
+    (An earlier docstring claimed it mirrored the reference adapter's
+    `entity_version` check; it never did, and the plans used here carry no
+    `entity_version` guard, so nothing rested on the claim.)
     """
 
     def __init__(self) -> None:

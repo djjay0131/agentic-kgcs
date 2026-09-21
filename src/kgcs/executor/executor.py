@@ -52,6 +52,14 @@ Four properties the executor guarantees, each an invariant test:
   concurrency; the default `snapshot_version="0"` gives
   single-use-against-a-virgin-graph semantics.
 
+  **The re-planned-replay guarantee holds only under a deterministic
+  `IdFactory`** (`DerivedIdFactory`, the default). Under `UlidIdFactory` a
+  re-planned attach mints a fresh `assertion_id` every time, so the guard names
+  a record that is genuinely absent and the duplicate lands — exactly as a
+  re-planned `CREATE_IDENTITY` would under the same factory. Replay protection
+  is a property of derived ids, and this guard enforces it; it does not create
+  it.
+
   Both executor-enforced guards need a reader. Constructed over a store that is
   neither a `GraphReader` nor paired with one, the executor has nothing to
   check them against and leaves them to the store — which, for the reference
@@ -82,7 +90,11 @@ from pydantic import BaseModel, ConfigDict
 
 from kgcs.clock import Clock, SystemClock
 from kgcs.ids import DerivedIdFactory, IdFactory
-from kgcs.planner import ASSERTION_ABSENT_PRECONDITION_KIND, SNAPSHOT_PRECONDITION_KIND
+from kgcs.planner import (
+    ASSERTION_ABSENT_PRECONDITION_KIND,
+    SNAPSHOT_PRECONDITION_KIND,
+    read_assertion_absent_guard,
+)
 
 DEFAULT_EXECUTED_BY = "kgcs.executor/auto"
 
@@ -111,8 +123,11 @@ class ExecutionOutcome(StrEnum):
     the store: `COMMITTED` advanced the graph to `new_epoch`; `STALE` hit a
     failed precondition and must be re-evaluated; `UNSUPPORTED_OPERATION` named
     an operation the adapter cannot apply (store untouched); `EMPTY` was a plan
-    with no operations (store untouched); `ERROR` is any other apply failure
-    the store reported.
+    with no operations (store untouched); `ERROR` is any other failure that
+    prevents this plan from being applied — one the store reported, or one the
+    executor detected before the store, such as a plan that contradicts its own
+    preconditions. Unlike `STALE`, an `ERROR` is not an invitation to
+    re-evaluate and retry.
     """
 
     COMMITTED = "COMMITTED"
@@ -284,6 +299,28 @@ class PlanExecutor:
                 )
             )
 
+        conflicting = self._self_conflicting_guards(plan)
+        if conflicting:
+            # The plan contradicts itself: it mints one assertion_id more than
+            # once. Refused before the store, and as ERROR rather than STALE —
+            # re-evaluating the graph can never make it applicable.
+            duplicated = sorted({p.expected for p in conflicting})
+            return self._finish(
+                self._record(
+                    plan,
+                    batch_id=None,
+                    outcome=ExecutionOutcome.ERROR,
+                    operation_ids=operation_ids,
+                    failed_preconditions=conflicting,
+                    error=(
+                        "plan is self-conflicting: it would mint the same "
+                        f"assertion_id more than once ({', '.join(duplicated)})"
+                    ),
+                    recorded_at=recorded_at,
+                    is_compensation=is_compensation,
+                )
+            )
+
         stale = self._unmet_preconditions(plan)
         if stale:
             # Either the plan was computed against a snapshot the graph has
@@ -358,14 +395,15 @@ class PlanExecutor:
         other kind. Two kinds are checked here:
 
         - `snapshot_version` — the plan was computed against a graph epoch the
-          store has already moved past;
+          store has already moved past. Needs a reader.
         - `assertion_absent` — the assertion this plan would mint is already on
-          its subject, i.e. this is a replay (ADR-0019).
+          its subject, i.e. this is a replay (ADR-0019). Needs a reader.
 
         `entity_version` is deliberately *not* re-checked here: the store owns
-        that counter and enforces it itself. Returns the empty tuple when no
-        reader is available — nothing the executor can check — or when every
-        guard it can check holds.
+        that counter and enforces it itself. With no reader there is nothing
+        the executor can check and this returns empty — see
+        `_self_conflicting_guards`, which is the one check that does **not**
+        need a reader and is therefore run separately.
         """
         if self._reader is None:
             return ()
@@ -376,9 +414,43 @@ class PlanExecutor:
                 if p.expected != epoch:
                     unmet.append(p)
             elif p.kind == ASSERTION_ABSENT_PRECONDITION_KIND:
-                if self._assertion_present(p.subject, p.expected):
+                subject_identity, assertion_id = read_assertion_absent_guard(p)
+                if self._assertion_present(subject_identity, assertion_id):
                     unmet.append(p)
         return tuple(unmet)
+
+    @staticmethod
+    def _self_conflicting_guards(plan: CurationPlan) -> tuple[Precondition, ...]:
+        """`assertion_absent` guards a plan cannot satisfy against *itself*.
+
+        The graph-state guards above are evaluated once, before the batch is
+        applied. That is the right time to ask "is this record already in the
+        graph?", and the wrong time to catch a plan that mints one
+        `assertion_id` **twice in its own operation list**: at check time the
+        record is genuinely absent, both guards pass, and both attaches land —
+        two rows under one `assertion_id`, which is the exact corruption
+        ADR-0019 exists to prevent, reached from inside a single plan instead
+        of across two.
+
+        It is a property of the plan alone, so it needs no reader and is
+        checked even for a write-only store. Every guard naming a duplicated
+        `assertion_id` is returned, not just the second: the plan is
+        unsatisfiable as a whole, and naming one of the pair would suggest the
+        other was fine.
+
+        Such a plan is refused as `ERROR`, not `STALE` — no amount of
+        re-evaluating the graph makes it applicable, and telling a caller to
+        re-evaluate and retry would send it round a loop that cannot terminate.
+        """
+        counts: dict[str, int] = {}
+        for p in plan.preconditions:
+            if p.kind == ASSERTION_ABSENT_PRECONDITION_KIND:
+                counts[p.expected] = counts.get(p.expected, 0) + 1
+        return tuple(
+            p
+            for p in plan.preconditions
+            if p.kind == ASSERTION_ABSENT_PRECONDITION_KIND and counts[p.expected] > 1
+        )
 
     def _assertion_present(self, subject_identity: str, assertion_id: str) -> bool:
         """True iff `assertion_id` is already attached to `subject_identity`.

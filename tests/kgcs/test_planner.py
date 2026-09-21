@@ -2,6 +2,7 @@
 
 from typing import Sequence
 
+import pytest
 from kg_contracts.assertions import Assertion, CanonicalEntity
 from kg_contracts.candidates import (
     Candidate,
@@ -9,7 +10,7 @@ from kg_contracts.candidates import (
     RelationCandidate,
     SourceCoordinates,
 )
-from kg_contracts.curation import CurationOperationType, CurationPlan
+from kg_contracts.curation import CurationOperationType, CurationPlan, Precondition
 from kg_contracts.stores import GraphMutationBatch
 from kg_contracts.testing.factories import (
     make_attribute_candidate,
@@ -153,6 +154,23 @@ class TestPreconditionsAndEvidence:
         assert len(guards) == 1
         assert guards[0].subject == subject
         assert guards[0].expected == plan.operations[0].payload["assertion_id"]
+
+    def test_the_guard_round_trips_through_its_own_reader(self) -> None:
+        # ADR-0019 claims one constructor and one reader are the only places
+        # that decide which field holds which. That is only true if the reader
+        # exists and refuses everything else — the executor calls it, so a
+        # reader that silently accepted a snapshot guard would hand the
+        # executor a graph id where an assertion id belongs.
+        from kgcs import assertion_absent_guard, read_assertion_absent_guard
+
+        guard = assertion_absent_guard("kg://g1/identity/ABC", "as_XYZ")
+        assert read_assertion_absent_guard(guard) == ("kg://g1/identity/ABC", "as_XYZ")
+        for wrong in (
+            Precondition(kind="snapshot_version", subject="g1", expected="0"),
+            Precondition(kind="entity_version", subject="kg://g1/identity/ABC", expected="0"),
+        ):
+            with pytest.raises(ValueError, match="not an assertion_absent precondition"):
+                read_assertion_absent_guard(wrong)
 
     def test_every_attach_operation_gets_its_own_guard(
         self, auto_scores: CandidateScores

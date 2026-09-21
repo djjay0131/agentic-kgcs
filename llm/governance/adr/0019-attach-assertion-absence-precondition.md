@@ -43,9 +43,11 @@ epoch: 1
 
 The damage is not a duplicated *count*, it is a duplicated *identity*: the
 canonical graph now holds two rows carrying the same `assertion_id`.
-`mark_superseded(assertion_id)` reaches only the first of them, so the duplicate
-is not merely redundant — it is unreachable by the supersession path that exists
-to retire it.
+`mark_superseded(assertion_id)` returns after its first match and does not skip
+rows it has already marked, so the duplicate is not merely missed once — it is
+**permanently** unreachable. Measured: after two consecutive
+`mark_superseded` calls for that id, one `ACTIVE` row remains, and no number of
+further calls will reach it.
 
 So replay protection was inconsistent **within one planner**: the operation type
 that mints an identity guarded itself; the operation type that mints an
@@ -63,9 +65,14 @@ Precondition(kind="assertion_absent",
 
 `subject` is a canonical graph subject, exactly as it is for an
 `entity_version` guard; the `kind` supplies the polarity (absence), and
-`expected` names the record that must not be there. The constructor
-`kgcs.planner.assertion_absent_guard` is the single place that decides which
-field holds which, so producers and the enforcing executor cannot disagree.
+`expected` names the record that must not be there. A matched pair —
+`kgcs.planner.assertion_absent_guard` to write one and
+`read_assertion_absent_guard` to read one back — are the only two places that
+decide which field holds which; the executor calls the reader rather than
+unpacking `subject`/`expected` positionally, and the reader raises on any other
+`kind` so a `snapshot_version` guard cannot be misread as an assertion
+reference. Both are exported from `kgcs`, so the follow-up producers named
+under §Risks can reach them through the package API.
 
 `PlanExecutor` enforces it, alongside the `snapshot_version` guard it already
 enforced, before touching the store: it reads the subject's assertions through
@@ -96,12 +103,35 @@ match, which does need a read) and simply too narrow — it did not consider tha
 a per-subject guard could be an *existence* check on the minted record instead
 of a version check on the subject.
 
-It also preserves the property that matters most downstream: legitimate
-re-assertion stays possible. The same fact attached again later with new
-evidence arrives as a **new candidate**, which derives a **different**
-`assertion_id`, whose `assertion_absent` guard names a record the graph does not
-hold — so it applies, and both assertions coexist with their own evidence. Only
-a byte-identical re-mint of an id already in the graph is refused. Evidence
+It also preserves the property that matters most downstream — legitimate
+re-assertion stays possible — but that property is **conditional on the
+producer's id scheme, and the condition must be stated rather than assumed.**
+
+`assertion_id` derives from `candidate_id` alone. So a re-assertion lands iff
+the producer minted a **new `candidate_id`** for it. Where it does, the new
+decision derives a different `assertion_id`, its guard names a record the graph
+does not hold, it applies, and both assertions coexist with their own evidence.
+
+Where it does not, the re-assertion is refused. This is not hypothetical: the
+adopter that reported this defect, `agentic-kg`, mints `candidate_id` from
+`(graph_id, candidate_kind, semantic_key)` with **evidence not an input**, so
+for it "the same fact carrying new evidence" is the *same* candidate id, and the
+re-assertion is refused `STALE` with the new evidence never landing. Measured on
+that shape: first attach `COMMITTED`; re-assert with `ev_2` added →
+`STALE (assertion_absent)`; evidence in the graph afterwards `['ev_1']`.
+
+**The caller contract, stated plainly:** an `assertion_absent` guard keys on
+`assertion_id`, which derives from `candidate_id`. A producer that wants a
+re-assertion carrying new evidence to land must mint a new `candidate_id` for
+it. A producer whose candidate ids are evidence-independent will see the
+re-assertion refused, loudly — a named failed precondition, never a silent
+drop — and must either widen its id seed or route the new evidence through
+supersession (`recuration.evolution`) rather than a fresh attach.
+
+Before this ADR that same shape duplicated the row *and* the new evidence
+became visible; after it, the row is not duplicated and the evidence does not
+land. That is a deliberate trade of silent corruption for a loud refusal, and
+both halves of it are pinned by tests. Evidence
 evolution is a release-critical adopter acceptance criterion; a guard that
 foreclosed it would be a worse defect than the one being fixed.
 
@@ -161,8 +191,19 @@ evolution case, and they must both land.
 - A replayed attach is refused with a named failed precondition, so the caller
   gets "re-evaluate, never blindly retry" (the contract's `CommitResult`
   semantics) instead of a silent duplicate.
-- The canonical graph can no longer hold two rows under one `assertion_id` via
-  this path, so `mark_superseded` keeps reaching every copy of a record.
+- A **replay across plans** can no longer put two rows under one
+  `assertion_id`, so `mark_superseded` keeps reaching every copy of a record
+  that arrived that way.
+- A plan that would mint one `assertion_id` **twice within its own operation
+  list** is refused outright, as `ERROR` rather than `STALE`. This is a second,
+  separate check (`PlanExecutor._self_conflicting_guards`) and it is deliberate
+  that it is separate: the absence guard is evaluated once, before the batch is
+  applied, which is the right moment to ask "is this record already in the
+  graph?" and the wrong moment to catch a plan whose *own* second operation is
+  what creates the duplicate. At check time the record is genuinely absent,
+  both guards pass, and both attaches land. The self-conflict check is a
+  property of the plan alone, so unlike the other two guards it needs no
+  `GraphReader` and holds even over a write-only store.
 
 ### Negative / Tradeoffs
 
@@ -171,10 +212,27 @@ evolution case, and they must both land.
   does O(attaches) reads.
 - The guard keys on `assertion_id`, which `DerivedIdFactory` derives from
   `candidate_id` alone. Two *different* facts submitted under one
-  `candidate_id` would collide on that id — but they already did, before this
-  ADR; the guard makes the collision visible (the second is refused) instead of
-  silently duplicating. Widening the assertion-id seed is a separate decision
-  and would change every derived id, so it is not taken here.
+  `candidate_id` collide on that id — as they already did before this ADR.
+  **Across plans** the guard makes the collision visible: the second is refused
+  `STALE`. **Within one plan** the collision is now refused as `ERROR` by the
+  self-conflict check; before that check both landed silently. Either way the
+  second fact does not reach the graph, which is a refusal, not a repair.
+  Widening the assertion-id seed is a separate decision and would change every
+  derived id, so it is not taken here.
+- **A superseded assertion's id is permanently burned.** Because the absence
+  read uses `include_superseded=True`, once a record is superseded its
+  `assertion_id` can never be re-attached: measured, three consecutive
+  re-attach attempts all return `STALE` and the subject is left with no active
+  row for that fact. There is no un-supersede surface. This is the correct
+  reading of "supersession marks, never deletes" — a re-mint of a superseded
+  id *is* a replay — but it is a real cost, not only a benefit, and a producer
+  that wants the fact back must mint a new candidate id for it.
+- **The guarantee is a property of derived ids, which this guard enforces but
+  does not create.** Under `UlidIdFactory` a re-planned attach mints a fresh
+  `assertion_id` every time, so the guard names a record that is genuinely
+  absent and the duplicate lands — exactly as a re-planned `CREATE_IDENTITY`
+  would under the same factory. Replay protection holds under
+  `DerivedIdFactory` (the default) and not otherwise.
 
 ### Risks
 
@@ -185,6 +243,15 @@ evolution case, and they must both land.
   them. This limit is pinned by
   `test_without_a_reader_the_attach_guard_is_unenforceable` rather than left
   implicit. Adapters that are write-only need their own enforcement.
+- **The absence read sits outside the store's transaction.** It runs before
+  `GraphMutationStore.apply`, so two executors racing on one subject can both
+  read "absent" and both write. This is the same class as the pre-existing
+  plan-level snapshot guard, which is checked in the same place and the same
+  way, so it is not a regression — but it is the second reason (after the
+  within-plan case) that this guard is an optimistic check rather than an
+  absolute guarantee. Closing it needs the absence test to happen inside the
+  adapter's transaction, which is a `GraphMutationStore` change, not an
+  executor one.
 - **Scope.** This ADR covers plans from `kgcs.planner`. `kgcs.recuration.evolution`
   and `kgcs.recuration.ontology` build their own plans and still emit only the
   snapshot guard; their attaches carry caller-supplied assertions, so extending
