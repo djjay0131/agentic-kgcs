@@ -1,7 +1,6 @@
 # ADR-0021: A fact's identity and a record's identity are distinct; `assertion_id` is the record
 
 Status: Accepted
-Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-09-21
 
 ## Context

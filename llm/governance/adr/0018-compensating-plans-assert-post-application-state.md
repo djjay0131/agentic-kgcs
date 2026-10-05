@@ -1,7 +1,6 @@
 # ADR-0018: A compensating plan asserts post-application state, and carries a payload a store can apply
 
 Status: Accepted
-Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-09-19
 
 ## Context
