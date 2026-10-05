@@ -103,6 +103,13 @@
   adopter only (v1.0.0 tag, declare `llm/plans/` slot, governance branches,
   upstream 0004/0015 + Issue #2 item 1 + `kg_eval` adapter, adopter wiring).
   See `activeContext.md` for the full wrap-up.
+- 2026-10-05: **Release `2.0.0`.** Bumped `pyproject` `1.0.0` → `2.0.0` (major:
+  the source-breaking ADR-0018 compensation change is in `main`), pinned
+  `agentic-kgis>=0.3.0`, and added `CHANGELOG.md` covering every post-`v1.0.0`
+  change (ADR-0017/0018/0019/0020/0021/0022). The `1.1.0` queued on issue #31
+  for ADR-0017 was never tagged, per ADR-0018's explicit instruction not to fold
+  the break behind a minor; the ADR-0017 change ships inside `2.0.0`. Owner tags
+  `v2.0.0` on the merge commit. Gates: 622 pytest, ruff, mypy strict (50 files).
 
 Works: the full KGCS v1 platform on `main` — deterministic core →
 transaction-aware executor + compensation + epochs → ER substrate (normalize/

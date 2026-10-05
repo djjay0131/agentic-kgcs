@@ -1,5 +1,20 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-05 (release, branch `chore/release-1.1.0`): **KGCS `2.0.0` — the
+version is major, not the `1.1.0` the branch and issue #31 name.** Issue #31
+queued a `1.1.0` minor for the ADR-0017 identity-strength change, but `main`
+merged the ADR-0018 compensation change (PR #34) before that bump landed, and
+ADR-0018 states that change is source-breaking and **must** ship as `2.0.0`,
+explicitly ruled out of a `1.1.0`. Since #34 is already in `main`, the next
+release cut from `main` cannot honestly be a minor. The release bumps
+`pyproject` `1.0.0` → `2.0.0`, pins `agentic-kgis>=0.3.0`, and adds the repo's
+first `CHANGELOG.md` covering every post-`v1.0.0` change (ADR-0017, 0018, 0019,
+0020, 0021, 0022). The owner tags `v2.0.0` on the merge commit. Gates on the
+release branch: 622 pytest, ruff clean, mypy strict (50 files). **Open for the
+owner:** whether issue #31 should be re-titled/re-filed for `v2.0.0`, or a
+`1.1.0` cut made from the ADR-0017 commit `4eafa83` if that release line is
+still wanted.
+
 Update 2026-10-05 (issue #43 fix, **ADR-0022 — Proposed**): **the identity
 disposition is now a resolution fact decided before routing, so kgis 0.3.0's
 `NEW_IDENTITY` AUTO path is reachable from the real producer.**
