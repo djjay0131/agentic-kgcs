@@ -1,6 +1,7 @@
 # ADR-0022: `ResolutionPolicy` derives the identity disposition from resolution facts, before routing
 
-Status: Proposed
+Status: Accepted
+Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-10-05
 
 ## Context

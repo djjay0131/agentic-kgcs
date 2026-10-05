@@ -1,6 +1,7 @@
 # ADR-0019: `ATTACH_ASSERTION` carries an `assertion_absent` per-subject precondition
 
-Status: Proposed
+Status: Accepted
+Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-09-21
 
 ## Context
