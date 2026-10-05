@@ -13,24 +13,41 @@ are answered here, both deterministically and both without touching a graph:
 2. **Identity disposition** — does this candidate create a new identity,
    attach to a known one, or neither?
 
-Sprint 1 has **no entity resolution** — no matcher, no graph read, no
-embeddings. So disposition uses only what the candidate already carries:
+**Disposition is a resolution fact, decided before routing** (ADR-0022,
+issue #43). `route()` takes both the score set and an `IdentityDisposition`,
+because "how confident are we in this link?" is a question that only exists
+once there is an existing identity to be wrong about. Deciding the
+disposition from the route it feeds was the closed cycle that made
+`agentic-kgis` 0.3.0's AUTO fix inert: `_dispose` minted an identity only
+when the route was already `AUTO`, so a new identity was never routed `AUTO`.
 
-- An `entity` candidate proposes a *new* identity. If it routes `AUTO`, this
+Sprint 1 has **no entity resolution** — no matcher, no graph read, no
+embeddings — so the warranted disposition is derived from what the candidate
+already carries:
+
+- An `entity` candidate proposes a *new* identity, so its disposition is
+  `NEW_IDENTITY`: no matching existing identity was found (no resolver ran,
+  and none is wired in front of this stage yet). If it routes `AUTO`, this
   stage mints its identity id (via the injected `IdFactory`, so replay is
   byte-identical) and records `create_new_identity=True`. If it does not
-  route `AUTO`, minting is deferred — the decision records no identity.
+  route `AUTO`, minting is deferred — the decision records no identity, but
+  the *disposition input* was still `NEW_IDENTITY`; it is not retroactively
+  reported `UNRESOLVED` just because routing happened first.
 - A `relation` / `attribute_assertion` candidate *attaches* to an existing
-  subject. If the candidate already carries that subject as a minted
-  identity id, the subject is known and travels into the decision. If it
-  carries an `EntityRef` alias instead, resolving it *requires* ER — so the
-  route is escalated to at least `LLM_ASSESS` and no identity is claimed.
-  This escalation is the one place routing is not confidence alone: a
-  candidate can have flawless scores and still be un-auto-applicable simply
-  because nobody has resolved its subject yet.
+  subject. If every endpoint is already a minted identity id, the link is
+  known and the disposition is `RESOLVED_EXISTING`; the identity gate then
+  still demands a stated `identity_confidence`, so this path is unchanged
+  from before ADR-0024. If any endpoint is an `EntityRef` alias instead,
+  resolution has not decided which identity it is (an ambiguous or
+  conflicting cluster is exactly this case), so the disposition is
+  `UNRESOLVED`; `AUTO` is blocked outright and the route is additionally
+  floored at `LLM_ASSESS` in `_dispose`.
 - An `artifact` candidate names no identity and no fact; it produces no
   canonical operation in v1 (see `kgcs.planner` and the ADR candidate on the
-  missing artifact operation type), so its disposition is always "neither".
+  missing artifact operation type). It asserts no identity link either, so
+  it keeps the pre-ADR-0024 semantics: the default `RESOLVED_EXISTING`
+  disposition, i.e. the identity-confidence gate is applied to it exactly as
+  it always was.
 
 `matcher_version` is `None` throughout — honest null, not a fabricated
 version, because no matcher ran. `snapshot_version` is the injected graph
@@ -42,12 +59,13 @@ a stale plan.
 from kg_contracts.candidates import (
     AttributeAssertionCandidate,
     Candidate,
+    EntityCandidate,
     RelationCandidate,
     SubjectRef,
 )
 from kg_contracts.curation import ResolutionDecision
 from kg_contracts.identity import is_identity_id
-from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy
+from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy, IdentityDisposition
 
 from kgcs.ids import DerivedIdFactory, IdFactory
 from kgcs.scores import score_vector
@@ -126,9 +144,41 @@ class ResolutionPolicy:
         """The graph snapshot every decision here is computed against."""
         return self._snapshot_version
 
+    def identity_disposition(self, candidate: Candidate) -> IdentityDisposition:
+        """The warranted disposition from resolution facts, **before** routing.
+
+        This is the input `route()` needs and the value this stage must never
+        re-derive from the route it produced (ADR-0022, issue #43). Sprint 1
+        reads no graph, so the facts are the candidate's kind and the form of
+        its subject references:
+
+        - `entity` -> `NEW_IDENTITY`. No matching existing identity has been
+          found; this stage is where one gets minted, and a new identity has
+          no resolution score to be confident about. A resolver wired in
+          front of this stage would instead supply `RESOLVED_EXISTING` or
+          `UNRESOLVED`; that is the seam ADR-0024 anticipated.
+        - `relation` / `attribute_assertion` whose every endpoint is already
+          a minted identity id -> `RESOLVED_EXISTING`. The link is known.
+        - `relation` / `attribute_assertion` with an `EntityRef` alias
+          endpoint -> `UNRESOLVED`. Resolution has not decided which identity
+          it is (an ambiguous or conflicting cluster is this case).
+        - `artifact` and any other kind that attaches to nothing ->
+          `RESOLVED_EXISTING`, the pre-ADR-0024 default, so a kind that makes
+          no identity claim is gated exactly as it always was.
+        """
+        if isinstance(candidate, EntityCandidate):
+            return IdentityDisposition.NEW_IDENTITY
+        refs = _subject_refs(candidate)
+        if not refs:
+            return IdentityDisposition.RESOLVED_EXISTING
+        if any(_known_identity(ref) is None for ref in refs):
+            return IdentityDisposition.UNRESOLVED
+        return IdentityDisposition.RESOLVED_EXISTING
+
     def resolve(self, candidate: Candidate) -> ResolutionDecision:
         """Produce the `ResolutionDecision` for one validated candidate."""
-        route = self._confidence_policy.route(candidate.scores)
+        disposition = self.identity_disposition(candidate)
+        route = self._confidence_policy.route(candidate.scores, disposition)
         resolved_identity, create_new_identity, route = self._dispose(candidate, route)
         return ResolutionDecision(
             candidate_id=candidate.candidate_id,

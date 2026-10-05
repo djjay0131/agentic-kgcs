@@ -1,5 +1,41 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-05 (issue #43 fix, **ADR-0022 — Proposed**): **the identity
+disposition is now a resolution fact decided before routing, so kgis 0.3.0's
+`NEW_IDENTITY` AUTO path is reachable from the real producer.**
+
+`kgcs.policy.ResolutionPolicy.resolve` called `route(candidate.scores)` with
+one argument, so `IdentityDisposition` defaulted to `RESOLVED_EXISTING` and
+every new-identity candidate — which by construction has
+`identity_confidence=None` — was blocked from `AUTO`. It was a closed cycle:
+`_dispose` minted an identity only when the route was already `AUTO`, so
+feeding the decision's own disposition back could not break it. Measured
+downstream: the real producer emitted **0 AUTO / 252 LLM_ASSESS**; with a
+warranted disposition, **8 / 244**. The behaviour was strictly *stronger*, not
+unsafe (all 252 were `UNRESOLVED`, which 0.3.0 blocks outright), but the
+headline capability of that release was unreachable.
+
+Fix: a new public `ResolutionPolicy.identity_disposition(candidate)` computes
+the warranted disposition from resolution facts **before** routing —
+`entity → NEW_IDENTITY`; assertion/relation with all-minted identity-id
+endpoints → `RESOLVED_EXISTING`; an `EntityRef` alias endpoint →
+`UNRESOLVED`; `artifact` → `RESOLVED_EXISTING` (the pre-ADR-0024 default,
+unchanged). `resolve` passes it to
+`ConfidencePolicy.route(scores, disposition)`; `_dispose` still owns minting
+and the unresolved-endpoint escalation (kept as defense in depth for
+`require_identity_confidence_for_auto=False`). **No threshold changed** —
+a test pins the defaults. Non-entity semantics are preserved: a stated low
+`identity_confidence` still blocks, and `UNRESOLVED` still blocks.
+
+Tests added in `tests/kgcs/test_policy.py` (the producer, not `route()`, is
+the thing under test): new identity with absent score → `AUTO` and a
+`CREATE_IDENTITY` plan; stated 0.5 → not `AUTO`; alias/`UNRESOLVED` → not
+`AUTO`; `RESOLVED_EXISTING` with absent score → not `AUTO`; and the cycle
+regression — a non-`AUTO` entity candidate is still reported `NEW_IDENTITY`,
+not silently `UNRESOLVED`. `pyproject` dependency floor moved `>=0.2.0` →
+`>=0.3.0`, the first release carrying `IdentityDisposition`. Gates: 618 pytest,
+ruff, strict mypy (50 files).
+
 Update 2026-09-21 (post-v1 defect fix, **DESIGN PROPOSAL awaiting owner
 acceptance**): **ADR-0021 — a fact's identity and a record's identity are
 distinct; `assertion_id` is the record.** Branch

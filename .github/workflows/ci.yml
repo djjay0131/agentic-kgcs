@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       # PEP 508 named direct reference: pip records this as satisfying the
-      # `agentic-kgis>=0.2.0` requirement by name, so the editable install below
+      # `agentic-kgis>=0.3.0` requirement by name, so the editable install below
       # does not try to re-resolve it from a package index (where it does not
       # exist). `@main` makes the ref explicit. agentic-kgis is public, so no
       # token is needed for the clone.

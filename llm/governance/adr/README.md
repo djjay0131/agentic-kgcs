@@ -13,6 +13,7 @@ founding + contract decisions. Use `0000-template.md`.
 | [0019](0019-attach-assertion-absence-precondition.md) | `ATTACH_ASSERTION` carries an `assertion_absent` per-subject precondition | Proposed |
 | [0020](0020-kgcs-completes-the-create-identity-inverse.md) | KGCS completes the `CREATE_IDENTITY` inverse, and stops keeping its own inverse table | Proposed |
 | [0021](0021-fact-identity-and-record-identity-are-distinct.md) | A fact's identity and a record's identity are distinct; `assertion_id` is the record | Proposed |
+| [0022](0022-resolution-policy-derives-identity-disposition.md) | `ResolutionPolicy` derives the identity disposition from resolution facts, before routing | Proposed |
 
 Numbering starts at `0017` because `candidates/` already occupies `0001`–`0016`
 and ten of those carry accepted decisions in place; reusing a candidate number
