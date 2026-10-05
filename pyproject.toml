@@ -7,7 +7,10 @@ name = "agentic-kgcs"
 version = "1.0.0"
 description = "Knowledge Graph Curation Service (admission, curation core + executor, review)"
 requires-python = ">=3.11"
-dependencies = ["agentic-kgis>=0.2.0"]
+# 0.3.0 (agentic-kgis de48639) is the first release carrying
+# `IdentityDisposition` / `ConfidencePolicy.route(..., identity_disposition=)`,
+# which KGCS's ResolutionPolicy now requires (KGCS ADR-0022, issue #43).
+dependencies = ["agentic-kgis>=0.3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff==0.16.4", "mypy>=1.10"]
