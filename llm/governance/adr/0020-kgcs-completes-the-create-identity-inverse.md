@@ -1,6 +1,7 @@
 # ADR-0020: KGCS completes the `CREATE_IDENTITY` inverse, and stops keeping its own inverse table
 
-Status: Proposed
+Status: Accepted
+Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-09-21
 
 ## Context

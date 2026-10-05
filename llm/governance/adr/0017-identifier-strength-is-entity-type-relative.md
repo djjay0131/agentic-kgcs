@@ -1,6 +1,7 @@
 # ADR-0017: Identifier strength is entity-type relative; scoped identifiers
 
-Status: Proposed
+Status: Accepted
+Approved: 2026-10-05 by owner (Jason Cusati), recorded in the orchestration session https://claude.ai/code/session_01CVmQfhYZSpo9ZCFCCPxpKv
 Date: 2026-09-18
 
 > **Numbering.** This is the first *standalone* local ADR file in this repo.
