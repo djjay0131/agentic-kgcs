@@ -26,6 +26,22 @@ against current `agentic-kgis` main, KGCS `main` has one red test —
 KGIS PR #55 added `RESTORE_IDENTITY`, which `INVERSE_OPERATION` now derives for a
 `CREATE_IDENTITY` compensation; unrelated to this change and proven on `BASE`.
 
+**Review round (PR #51, issue #48).** Five findings, all fixed on this branch.
+(1) `INSERT OR REPLACE` on an existing key silently deleted the old row through
+a path the `DELETE` trigger never saw; every main and ref table now carries a
+`BEFORE INSERT` duplicate-key guard that `RAISE(ABORT)`s, pinned by tests that a
+replacement fails and the original row is unchanged. (2) `recorded_at` is now
+`datetime | None = None` ("unknown, pre-#48 record") on both semantic records,
+so a main-era serialized record still validates, persists, and replays — proven
+by deserializing a record with the two #48 fields stripped. (3) `PRAGMA
+user_version` stamps and checks the schema version on open (`SchemaVersionError`
+on an unknown one). (4) `executescript` (which commits a shared connection's
+open transaction) is replaced by individual `execute()` calls inside a
+`SAVEPOINT`, so constructing a sink leaves a caller's in-flight transaction
+intact. (5) each append wraps the main row and its ref rows in one transaction
+(`with conn:`), so a failed ref insert rolls back the whole record. Gates: 655
+pytest (same one pre-existing failure), ruff clean, mypy strict (53 files).
+
 Update 2026-10-05 (release, branch `chore/release-1.1.0`): **KGCS `2.0.0` — the
 version is major, not the `1.1.0` the branch and issue #31 name.** Issue #31
 queued a `1.1.0` minor for the ADR-0017 identity-strength change, but `main`

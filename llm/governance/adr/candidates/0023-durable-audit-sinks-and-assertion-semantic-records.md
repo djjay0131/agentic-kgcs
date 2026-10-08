@@ -30,11 +30,20 @@ Implement all of it KGCS-local, without touching the frozen contract:
 - `kgcs.persistence.sqlite` adds `SqliteAuditSink` / `SqliteExecutionSink` /
   `SqliteSemanticAuditSink` — append-only-at-rest tables whose immutability is
   enforced by `BEFORE UPDATE`/`BEFORE DELETE` triggers (`RAISE(ABORT)`), the
-  pattern `agentic-kgis` uses in `src/kgis/ledger/audit.py`. The in-memory sinks
-  stay the defaults.
-- `SemanticAuditRecord` gains an injected-clock `recorded_at` and a
-  `decision_kind` discriminant; a sibling `AssertionSemanticAuditRecord` covers
-  assertion / re-curation decisions, produced by the same
+  pattern `agentic-kgis` uses in `src/kgis/ledger/audit.py`. `BEFORE UPDATE`/
+  `BEFORE DELETE` alone does not close `INSERT OR REPLACE`, which deletes the
+  conflicting row without firing a `DELETE` trigger; every table also carries a
+  `BEFORE INSERT` duplicate-key guard, so a replacement is aborted before
+  conflict resolution. The schema is created with individual `execute()` calls
+  inside a `SAVEPOINT` (never `executescript`, which commits a shared
+  connection's open transaction), each append wraps its main and ref rows in one
+  transaction, and `PRAGMA user_version` stamps and checks the schema version on
+  open. The in-memory sinks stay the defaults.
+- `SemanticAuditRecord` gains an injected-clock `recorded_at` (optional,
+  default `None` — the honest unknown for a pre-#48 record, so main-era
+  serialized records still validate and replay) and a `decision_kind`
+  discriminant; a sibling `AssertionSemanticAuditRecord` covers assertion /
+  re-curation decisions, produced by the same
   `SemanticAuditBuilder.build_assertion` and recorded through the same
   `SemanticAuditSink` (a union), joined by `trace_id` / `plan_id` / assertion
   ids.
