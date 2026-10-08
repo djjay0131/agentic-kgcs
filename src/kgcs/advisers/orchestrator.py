@@ -154,14 +154,17 @@ class CurationOrchestrator:
         if not advisers:
             return OrchestrationResult(decision=baseline, baseline=baseline, consulted=False)
 
-        question = _identity_question(
-            match_result,
-            evidence_ids=evidence_ids,
-            trace_id=trace_id,
-            evidence_refs=evidence_refs,
-            evidence_lookup=self._evidence_lookup,
-            evidence_max_chars=self._evidence_max_chars,
-        )
+        try:
+            question = _identity_question(
+                match_result,
+                evidence_ids=evidence_ids,
+                trace_id=trace_id,
+                evidence_refs=evidence_refs,
+                evidence_lookup=self._evidence_lookup,
+                evidence_max_chars=self._evidence_max_chars,
+            )
+        except Exception:  # noqa: BLE001 — a broken evidence lookup must never escape `resolve`
+            return OrchestrationResult(decision=baseline, baseline=baseline, consulted=False)
         raw = tuple(adviser.assess(question) for adviser in advisers)
         final = self._fold(baseline, raw, profile=profile)
         assessments = tuple(
@@ -278,6 +281,7 @@ def _identity_question(
         update={
             "evidence_context": render.lines,
             "rendered_evidence_ids": render.rendered_ids,
+            "unresolved_evidence_ids": render.unresolved_ids,
             "evidence_truncated": render.truncated,
         }
     )
