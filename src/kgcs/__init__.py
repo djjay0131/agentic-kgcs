@@ -150,6 +150,7 @@ from kgcs.observability import (
     should_raise_threshold,
 )
 from kgcs.persistence import (
+    SchemaVersionError,
     SqliteAuditSink,
     SqliteExecutionSink,
     SqliteSemanticAuditSink,
@@ -446,6 +447,7 @@ __all__ = [
     "SqliteAuditSink",
     "SqliteExecutionSink",
     "SqliteSemanticAuditSink",
+    "SchemaVersionError",
     "ErMetrics",
     "CurationMetrics",
     "er_metrics",

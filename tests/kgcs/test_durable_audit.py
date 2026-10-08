@@ -15,6 +15,7 @@ Plus the read API (`records_for_trace` / `records_for_assertion` /
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -34,6 +35,7 @@ from kgcs.er.resolution import ErAction
 from kgcs.executor import ExecutionOutcome, ExecutionRecord
 from kgcs.observability import (
     AssertionSemanticAuditRecord,
+    DecisionKind,
     EvolutionAuditRecorder,
     InMemorySemanticAuditSink,
     ReplayInputs,
@@ -41,7 +43,12 @@ from kgcs.observability import (
     SemanticAuditRecord,
     replay,
 )
-from kgcs.persistence import SqliteAuditSink, SqliteExecutionSink, SqliteSemanticAuditSink
+from kgcs.persistence import (
+    SchemaVersionError,
+    SqliteAuditSink,
+    SqliteExecutionSink,
+    SqliteSemanticAuditSink,
+)
 from kgcs.profiles import default_profile
 from kgcs.recuration import ConceptEvolutionPlanner, EvolutionKind, EvolutionRouter
 from kgcs.recuration.triggers import CurationTrigger, TriggerKind
@@ -200,6 +207,213 @@ class TestAppendOnly:
             conn.execute("UPDATE semantic_audit_assertions SET assertion_id = 'x'")
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("DELETE FROM semantic_audit_operations")
+
+    def test_audit_sink_rejects_insert_or_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteAuditSink(conn)
+        original = _audit_record()
+        sink.record(original)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO audit_records "
+                "(audit_id, operation_id, trace_id, recorded_at, record_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    original.audit_id,
+                    "op_replaced",
+                    "trace_replaced",
+                    _CLOCK.now().isoformat(),
+                    original.model_dump_json(),
+                ),
+            )
+        assert [r.trace_id for r in sink.records()] == [_TRACE]
+
+    def test_audit_sink_rejects_rowid_replace(self) -> None:
+        # `INSERT OR REPLACE` can also conflict on the rowid primary key; the
+        # `seq` guard closes that path as well as the content-key one.
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteAuditSink(conn)
+        sink.record(_audit_record())
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO audit_records "
+                "(seq, audit_id, operation_id, trace_id, recorded_at, record_json) "
+                "VALUES (1, 'au_replaced', 'op_x', 'trace_x', ?, ?)",
+                (_CLOCK.now().isoformat(), '{"x": 1}'),
+            )
+        assert [r.audit_id for r in sink.records()] == ["au_1"]
+
+    def test_semantic_sink_rejects_rowid_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        original = _er_record()
+        sink.record(original)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_records "
+                "(seq, audit_id, decision_kind, trace_id, plan_id, recorded_at, record_json) "
+                "VALUES (1, 'au_replaced', 'ER', 'trace_x', NULL, ?, ?)",
+                (_CLOCK.now().isoformat(), '{"x": 1}'),
+            )
+        assert [r.audit_id for r in sink.records()] == [original.audit_id]
+
+    def test_execution_sink_allows_repeated_execution_ids(self) -> None:
+        # `execution_id` is a content address and deliberately non-unique: a
+        # repeated identical-outcome retry is a distinct arrival and must append
+        # (see `PlanExecutor._record`). The per-arrival key is `seq`.
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteExecutionSink(conn)
+        original = _execution_record()
+        sink.record(original)
+        sink.record(original)
+        assert [r.execution_id for r in sink.records()] == ["ex_1", "ex_1"]
+
+    def test_execution_sink_rejects_rowid_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteExecutionSink(conn)
+        sink.record(_execution_record())
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO execution_records "
+                "(seq, execution_id, plan_id, outcome, recorded_at, record_json) "
+                "VALUES (1, 'ex_replaced', 'pl_replaced', 'ERROR', ?, ?)",
+                (_CLOCK.now().isoformat(), '{"x": 1}'),
+            )
+        assert [r.plan_id for r in sink.records()] == ["pl_1"]
+
+    def test_semantic_sink_rejects_insert_or_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        original = _er_record()
+        sink.record(original)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_records "
+                "(audit_id, decision_kind, trace_id, plan_id, recorded_at, record_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    original.audit_id,
+                    original.decision_kind.value,
+                    "trace_replaced",
+                    None,
+                    _CLOCK.now().isoformat(),
+                    original.model_dump_json(),
+                ),
+            )
+        assert [r.trace_id for r in sink.records()] == [_TRACE]
+
+    def test_semantic_ref_table_rejects_insert_or_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        record = _assertion_record(sink)
+        assertion_id = record.assertion_ids[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_assertions "
+                "(audit_id, assertion_id) VALUES (?, ?)",
+                (record.audit_id, assertion_id),
+            )
+        assert [r.audit_id for r in sink.records_for_assertion(assertion_id)] == [
+            record.audit_id
+        ]
+
+
+# --- per-append atomicity -----------------------------------------------------
+
+
+class TestAppendAtomicity:
+    def test_a_failed_ref_insert_rolls_back_the_main_row(self) -> None:
+        record = _assertion_record(InMemorySemanticAuditSink())
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        # Pre-seed the exact (audit_id, assertion_id) the append will write, so
+        # the main insert succeeds but the ref insert aborts on the duplicate
+        # guard. The whole record must roll back, not leave a half-written row.
+        conn.execute(
+            "INSERT INTO semantic_audit_assertions (audit_id, assertion_id) VALUES (?, ?)",
+            (record.audit_id, record.assertion_ids[0]),
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            sink.record(record)
+        assert (
+            conn.execute("SELECT COUNT(*) FROM semantic_audit_records").fetchone()[0] == 0
+        )
+        assert (
+            conn.execute("SELECT COUNT(*) FROM semantic_audit_assertions").fetchone()[0] == 1
+        )
+
+
+# --- schema versioning --------------------------------------------------------
+
+
+class TestSchemaVersioning:
+    def test_fresh_connection_is_stamped_with_the_current_version(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        SqliteAuditSink(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+    def test_all_three_sinks_agree_on_the_version(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        SqliteAuditSink(conn)
+        SqliteExecutionSink(conn)
+        SqliteSemanticAuditSink(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+    def test_unknown_schema_version_is_refused_on_open(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA user_version = 99")
+        with pytest.raises(SchemaVersionError):
+            SqliteAuditSink(conn)
+
+
+# --- transactions on a shared connection --------------------------------------
+
+
+class TestSharedConnection:
+    def test_schema_creation_does_not_commit_a_callers_transaction(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE probe (x INTEGER)")
+        conn.execute("INSERT INTO probe VALUES (1)")
+        assert conn.in_transaction
+        SqliteSemanticAuditSink(conn)
+        # `executescript` (the old code) would have committed here; a savepoint
+        # leaves the caller's transaction intact.
+        assert conn.in_transaction
+        conn.rollback()
+        assert conn.execute("SELECT COUNT(*) FROM probe").fetchone()[0] == 0
+
+    def test_constructing_a_sink_twice_is_idempotent(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        SqliteSemanticAuditSink(conn)
+        SqliteSemanticAuditSink(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+# --- backward compatibility with pre-#48 records ------------------------------
+
+
+class TestPre48BackwardCompatibility:
+    def test_a_pre_48_record_loads_replays_and_persists(self, tmp_path) -> None:
+        current = _er_record()
+        data = json.loads(current.model_dump_json())
+        # A main-era record carried neither of #48's new fields.
+        del data["recorded_at"]
+        del data["decision_kind"]
+        legacy = SemanticAuditRecord.model_validate_json(json.dumps(data))
+        assert legacy.recorded_at is None
+        assert legacy.decision_kind is DecisionKind.ER
+        assert replay(legacy).reproduced is True
+
+        path = tmp_path / "legacy.sqlite3"
+        conn = sqlite3.connect(path)
+        SqliteSemanticAuditSink(conn).record(legacy)
+        conn.close()
+
+        reopened = sqlite3.connect(path)
+        (restored,) = SqliteSemanticAuditSink(reopened).records()
+        assert restored.recorded_at is None
+        assert replay(restored).reproduced is True
 
 
 # --- persistence across a reopen ----------------------------------------------

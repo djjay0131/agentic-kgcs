@@ -12,12 +12,14 @@ connection.
 """
 
 from kgcs.persistence.sqlite import (
+    SchemaVersionError,
     SqliteAuditSink,
     SqliteExecutionSink,
     SqliteSemanticAuditSink,
 )
 
 __all__ = [
+    "SchemaVersionError",
     "SqliteAuditSink",
     "SqliteExecutionSink",
     "SqliteSemanticAuditSink",

@@ -28,7 +28,10 @@ must say *when* the decision was made to be joinable against the operation and
 execution streams, which both carry timestamps. Like every other clocked field
 in the core it is injected, so a `FixedClock` keeps the record a pure function
 of its inputs and a replay assembles a byte-identical record. The *content*
-(ids, decisions, versions) remains clock-free; only `recorded_at` moves.
+(ids, decisions, versions) remains clock-free; only `recorded_at` moves. It is
+**optional and defaults to `None`** so a record serialized before #48 (which
+had no timestamp) still validates and replays; `None` is the honest unknown, not
+a fabricated instant.
 
 **Assertion and re-curation decisions (issue #48).** The ER-decision record has
 a sibling, `AssertionSemanticAuditRecord`, with the same decision-lineage shape
@@ -283,7 +286,13 @@ class SemanticAuditRecord(BaseModel):
     score_vector: dict[str, float | None] = Field(default_factory=dict)
     versions: VersionSet = Field(default_factory=VersionSet)
     replay_inputs: ReplayInputs
-    recorded_at: datetime
+    recorded_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the decision was recorded; `None` for a pre-#48 record, "
+            "where the timestamp is unknown."
+        ),
+    )
 
     @property
     def final_action(self) -> str:
@@ -334,7 +343,13 @@ class AssertionSemanticAuditRecord(BaseModel):
     operation_ids: tuple[str, ...] = ()
     versions: VersionSet = Field(default_factory=VersionSet)
     replay_inputs: AssertionReplayInputs
-    recorded_at: datetime
+    recorded_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the decision was recorded; `None` for a pre-#48 record, "
+            "where the timestamp is unknown."
+        ),
+    )
 
     @property
     def final_kind(self) -> str:
