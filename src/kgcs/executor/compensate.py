@@ -13,7 +13,8 @@ Four facts make this honest rather than aspirational:
 - **The inverse map is published by the contract, and some operations still
   have no inverse.** `INVERSE_OPERATION` is a projection of
   `kg_contracts.INVERSE_OPERATION_TYPES`, never a hand-kept second copy.
-  `CREATE_IDENTITY`↔`REVOKE_IDENTITY` (KGIS ADR-0025),
+  `CREATE_IDENTITY`→`REVOKE_IDENTITY` and `REVOKE_IDENTITY`↔`RESTORE_IDENTITY`
+  (KGIS ADR-0025, ADR-0027),
   `ATTACH_ASSERTION`↔`RETRACT_ASSERTION`,
   `MERGE_IDENTITIES`↔`SPLIT_IDENTITY`, and `REASSIGN_ASSERTION` (self-inverse)
   are compensable. `PROMOTE_ONTOLOGY_TERM` has **no** reversing operation type
@@ -25,8 +26,8 @@ Four facts make this honest rather than aspirational:
 
   **A named inverse is not an executable rollback.** `INVERSE_OPERATION`
   answers "what type reverses this type"; whether the rollback can actually be
-  applied depends on what the executing store implements. Seven types have a
-  named inverse; the reference store applies three. `fully_compensable` means
+  applied depends on what the executing store implements. Eight types have a
+  named inverse; the reference store applies four. `fully_compensable` means
   the former and nothing stronger.
 - **The reversal payload comes from the contract's own `reversal_data`, not a
   guess — and it is a *payload*, not the whole dict.** A producer puts the

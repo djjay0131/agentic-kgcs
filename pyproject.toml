@@ -10,6 +10,13 @@ requires-python = ">=3.11"
 # 0.3.0 (agentic-kgis de48639) is the first release carrying
 # `IdentityDisposition` / `ConfidencePolicy.route(..., identity_disposition=)`,
 # which KGCS's ResolutionPolicy now requires (KGCS ADR-0022, issue #43).
+# It is a floor, not a pin. `RESTORE_IDENTITY` (KGIS ADR-0027, PR #55) is on
+# agentic-kgis `main` but has had no tagged release (agentic-kgis is still
+# 0.3.0), so there is no higher version to raise the floor to. CI installs
+# `agentic-kgis @ git+https://github.com/djjay0131/agentic-kgis.git@main`; to
+# make that floating install fail loudly instead of silently on contract drift,
+# the expected `INVERSE_OPERATION_TYPES` table is pinned by
+# tests/kgcs/test_compensate.py::TestInverseMap::test_the_contract_inverse_table_is_the_one_kgcs_adopts.
 dependencies = ["agentic-kgis>=0.3.0"]
 
 [project.optional-dependencies]

@@ -142,7 +142,8 @@ class TestInverseMap:
         assert op.payload["identity_id"] == identity_id
         assert set(op.payload) == {"identity_id", "reason"}
         # ...and the pre-revoke entity travels in reversal_data, which is what
-        # makes the revoke itself compensable by a CREATE_IDENTITY.
+        # makes the revoke itself compensable by a RESTORE_IDENTITY (KGIS
+        # ADR-0027; the contract's inverse of REVOKE_IDENTITY).
         assert op.reversal_data[INVERSE_PAYLOAD_KEY] == dict(plan.operations[0].payload)
 
     @pytest.mark.parametrize(
@@ -259,6 +260,27 @@ class TestInverseMap:
         (op,) = second.plan.operations
         assert op.type is CurationOperationType.ATTACH_ASSERTION
         assert op.payload == {"forward": "payload"}
+
+    def test_the_contract_inverse_table_is_the_one_kgcs_adopts(self) -> None:
+        # kg_contracts is installed from agentic-kgis `main` in CI, not from a
+        # locked release, so a contract edit can move the inverse vocabulary
+        # under KGCS silently — exactly how agentic-kgis#55 turned KGCS `main`
+        # red: it retargeted `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` from
+        # `CREATE_IDENTITY` to `RESTORE_IDENTITY` with no KGCS change, and the
+        # drift surfaced in a rollback test rather than at the contract seam.
+        # Pinning the whole table KGCS is written against makes any drift fail
+        # here, loudly, naming the operation. Update it deliberately when
+        # adopting a new contract, never to quiet this test.
+        assert dict(INVERSE_OPERATION_TYPES) == {
+            CurationOperationType.CREATE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+            CurationOperationType.REVOKE_IDENTITY: CurationOperationType.RESTORE_IDENTITY,
+            CurationOperationType.RESTORE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+            CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
+            CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
+            CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
+            CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
+            CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
+        }
 
     @pytest.mark.parametrize(
         "non_inverse",
@@ -866,11 +888,14 @@ class TestRollbackIsDemonstrated:
         self, clock: FixedClock, auto_scores: CandidateScores
     ) -> None:
         # KGIS ADR-0025 §6: `reversal_data` must hold the entity as it was
-        # BEFORE the revoke — i.e. ACTIVE. Compensating from a post-revoke copy
-        # would "restore" the identity still REVOKED, which restores nothing.
+        # BEFORE the revoke — i.e. ACTIVE — rather than a post-revoke copy.
         # `Compensator._invert` gets this right generically, by carrying the
         # forward operation's own payload (written at plan time, status ACTIVE)
-        # rather than reading the graph back; this pins that it stays true.
+        # rather than reading the graph back; this pins that it stays true. The
+        # inverse the contract names for a revoke is now `RESTORE_IDENTITY`
+        # (KGIS ADR-0027), which needs only the identity reference and flips the
+        # status itself, but a pre-revoke ACTIVE snapshot is still what the
+        # forward op recorded and what the reversal must carry.
         store, executor, plan, identity_ids, epoch = self._committed_run(clock, auto_scores)
         result = Compensator().compensate(plan, against_snapshot=epoch)
         assert result.plan is not None
@@ -894,18 +919,19 @@ class TestRollbackIsDemonstrated:
             == CurationStatus.ACTIVE.value
         )
 
-    def test_the_round_trip_restores_the_identity_but_not_its_creation_epoch(
+    def test_the_round_trip_restores_the_identity_and_its_creation_epoch(
         self, clock: FixedClock, auto_scores: CandidateScores
     ) -> None:
-        # The stated bound, pinned so it is a known limit rather than a
-        # surprise. REVOKE_IDENTITY inverts to CREATE_IDENTITY, which restores
-        # the entity ACTIVE — but `curation_epoch` is assigned by the executor
-        # at apply time, so the restored record carries the epoch of the batch
-        # that re-created it, not the one that originally created it.
-        # Deliberately NOT repaired in place: KGIS mutant B1' showed that making
-        # CREATE_IDENTITY honour an epoch in its payload corrupts the forward
-        # leg's own guarantee. The fix is a distinct RESTORE_IDENTITY operation
-        # — agentic-kgis issue #51.
+        # The stated bound this test used to pin is fixed. `REVOKE_IDENTITY`
+        # inverts to `RESTORE_IDENTITY` (KGIS ADR-0027, PR #55), a status flip
+        # that leaves `curation_epoch` untouched, so the restored record keeps
+        # the epoch that originally created it — an epoch-scoped read of that
+        # creation epoch still finds it. The old inverse was `CREATE_IDENTITY`,
+        # which restores the entity ACTIVE but re-stamps `curation_epoch` at
+        # apply time. Deliberately NOT repaired in place: KGIS mutant B1' showed
+        # that making CREATE_IDENTITY honour an epoch in its payload corrupts
+        # the forward leg's own guarantee. The distinct RESTORE_IDENTITY
+        # operation is what replaced it.
         store, executor, plan, identity_ids, created_epoch = self._committed_run(
             clock, auto_scores
         )
@@ -918,11 +944,11 @@ class TestRollbackIsDemonstrated:
         assert revoked_at.committed and revoked_at.new_epoch is not None
         assert store.get_entity(identity_id) is None
 
-        # Compensating the compensation is a CREATE_IDENTITY.
+        # Compensating the compensation is a RESTORE_IDENTITY.
         restore = Compensator().compensate(revoke.plan, against_snapshot=revoked_at.new_epoch)
         assert restore.plan is not None
         assert [op.type for op in restore.plan.operations] == [
-            CurationOperationType.CREATE_IDENTITY
+            CurationOperationType.RESTORE_IDENTITY
         ] * self.RUN_SIZE
         restored_at = executor.execute(restore.plan, is_compensation=True)
         assert restored_at.committed and restored_at.new_epoch is not None
@@ -930,10 +956,18 @@ class TestRollbackIsDemonstrated:
         back = store.get_entity(identity_id)
         assert back is not None
         assert back.status is CurationStatus.ACTIVE  # the identity IS restored
-        # ...and the epoch is not. Asserted as the relationship, not a literal:
-        # the restored record takes the epoch of the batch that re-created it.
-        assert back.curation_epoch == restored_at.new_epoch
-        assert back.curation_epoch != created_epoch
+        # ...and so is its creation epoch. The restore is a status flip, not a
+        # re-create, so the record keeps its original stamp and an epoch-scoped
+        # read of the epoch that created it still returns it.
+        assert back.curation_epoch == created_epoch
+        assert back.curation_epoch != restored_at.new_epoch
+        at_creation = GraphReadOptions(
+            curation_epoch=created_epoch, include_revoked=True
+        )
+        assert identity_id in {
+            e.identity_id
+            for e in store.find_entities(entity_type="TestEntity", options=at_creation)
+        }
 
     def test_a_named_inverse_does_not_mean_an_executable_rollback(
         self, clock: FixedClock, auto_scores: CandidateScores
@@ -941,8 +975,8 @@ class TestRollbackIsDemonstrated:
         # `INVERSE_OPERATION_TYPES` answers "what type reverses this type" — a
         # vocabulary statement — NOT "can this plan be rolled back today".
         # A caller must consult both it and the executor's supported set.
-        # Measured on the merged contract: 7 types have a named inverse, the
-        # reference store executes 3.
+        # Measured on the merged contract (KGIS ADR-0027): 8 types have a named
+        # inverse, the reference store executes 4.
         named_inverse = {t for t in INVERSE_OPERATION_TYPES}
         assert CurationOperationType.RETRACT_ASSERTION in named_inverse
         assert CurationOperationType.RETRACT_ASSERTION not in DEFAULT_SUPPORTED_OPERATIONS

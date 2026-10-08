@@ -29,8 +29,9 @@ Two guarantees hold for every operation emitted here:
 
 - **Compensable or explicitly non-compensable (§9 law 8).** Every op type used
   is present in `executor.compensate.INVERSE_OPERATION`. `MERGE↔SPLIT`,
-  `ATTACH↔RETRACT`, `REASSIGN` (self-inverse) and — since KGIS ADR-0025 —
-  `CREATE↔REVOKE` are compensable, so a promotion is compensable too; it was
+  `ATTACH↔RETRACT`, `REASSIGN` (self-inverse) and — since KGIS ADR-0025 /
+  ADR-0027 — `CREATE→REVOKE` / `REVOKE↔RESTORE` are
+  compensable, so a promotion is compensable too; it was
   *declared* non-compensable only while the vocabulary had no inverse for it.
   A caller must still block auto-execution of a rollback that cannot fully
   reverse, and must check that the executing store implements the inverse type:
