@@ -35,10 +35,16 @@ plan — its output is an `OrchestrationResult` carrying a decision and the
 assessments (§9 law 16).
 """
 
+from kg_contracts.evidence import EvidenceRef
 from kg_contracts.identity import IdentityLinkKind
 from pydantic import BaseModel, ConfigDict
 
 from kgcs.advisers.base import AdviserAssessment, AdviserQuestion
+from kgcs.advisers.evidence import (
+    DEFAULT_EVIDENCE_MAX_CHARS,
+    EvidenceLookup,
+    render_evidence,
+)
 from kgcs.advisers.specialists import IdentityAdviser, IdentityRecommendation
 from kgcs.er.cluster import ClusterValidation
 from kgcs.er.matcher import MatchResult
@@ -105,9 +111,13 @@ class CurationOrchestrator:
         *,
         policy: ErResolutionPolicy | None = None,
         identity_adviser: IdentityAdviser | None = None,
+        evidence_lookup: EvidenceLookup | None = None,
+        evidence_max_chars: int = DEFAULT_EVIDENCE_MAX_CHARS,
     ) -> None:
         self._policy = policy or ErResolutionPolicy()
         self._identity_adviser = identity_adviser
+        self._evidence_lookup = evidence_lookup
+        self._evidence_max_chars = evidence_max_chars
 
     def resolve(
         self,
@@ -120,12 +130,16 @@ class CurationOrchestrator:
         malformed: bool = False,
         evidence_ids: tuple[str, ...] = (),
         trace_id: str = "",
+        evidence_refs: tuple[EvidenceRef, ...] = (),
     ) -> OrchestrationResult:
         """Decide one pair: baseline first, advice only if the baseline defers.
 
         `cluster_validation`/`snapshot_stale`/`evidence_count`/`malformed` are
         passed straight through to the Wave-3 policy. `evidence_ids`/`trace_id`
         thread evidence and trace provenance into the adviser question.
+        `evidence_refs` supplies the citation relationship per id; with an
+        injected `evidence_lookup` the question's evidence text is rendered into
+        the prompt (KGPS U7, issue #49).
         """
         baseline = self._policy.decide(
             match_result,
@@ -140,7 +154,14 @@ class CurationOrchestrator:
         if not advisers:
             return OrchestrationResult(decision=baseline, baseline=baseline, consulted=False)
 
-        question = _identity_question(match_result, evidence_ids=evidence_ids, trace_id=trace_id)
+        question = _identity_question(
+            match_result,
+            evidence_ids=evidence_ids,
+            trace_id=trace_id,
+            evidence_refs=evidence_refs,
+            evidence_lookup=self._evidence_lookup,
+            evidence_max_chars=self._evidence_max_chars,
+        )
         raw = tuple(adviser.assess(question) for adviser in advisers)
         final = self._fold(baseline, raw, profile=profile)
         assessments = tuple(
@@ -218,21 +239,47 @@ class CurationOrchestrator:
 
 
 def _identity_question(
-    match_result: MatchResult, *, evidence_ids: tuple[str, ...], trace_id: str
+    match_result: MatchResult,
+    *,
+    evidence_ids: tuple[str, ...],
+    trace_id: str,
+    evidence_refs: tuple[EvidenceRef, ...] = (),
+    evidence_lookup: EvidenceLookup | None = None,
+    evidence_max_chars: int = DEFAULT_EVIDENCE_MAX_CHARS,
 ) -> AdviserQuestion:
     """Build the deterministic identity question for a scored pair.
 
     Derived purely from the pair's endpoint keys and the supplied evidence/trace,
     so a test can reproduce the exact request (and thus the recorded fixture key)
-    without any hidden state.
+    without any hidden state. With an `evidence_lookup`, the cited evidence text
+    is rendered into `evidence_context` here — the identity path previously never
+    filled it, so the LLM judged support without seeing any evidence (issue #49).
     """
     pair = match_result.pair
-    return AdviserQuestion(
+    question = AdviserQuestion(
         kind="identity",
         subject=pair.left,
         other=pair.right,
         evidence_ids=evidence_ids,
+        evidence_relationships=tuple(
+            (ref.evidence_id, ref.relationship.value) for ref in evidence_refs
+        ),
         trace_id=trace_id,
+    )
+    if evidence_lookup is None or not evidence_ids:
+        return question
+    render = render_evidence(
+        evidence_ids,
+        lookup=evidence_lookup,
+        relationships=dict(question.evidence_relationships),
+        max_chars=evidence_max_chars,
+    )
+    return question.model_copy(
+        update={
+            "evidence_context": render.lines,
+            "rendered_evidence_ids": render.rendered_ids,
+            "evidence_truncated": render.truncated,
+        }
     )
 
 

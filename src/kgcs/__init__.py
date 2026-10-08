@@ -18,6 +18,8 @@ determinism primitives (`clock`, `ids`, `scores`) and the in-memory
 """
 
 from kgcs.advisers import (
+    DEFAULT_EVIDENCE_MAX_CHARS,
+    UNKNOWN_RELATIONSHIP,
     Adviser,
     AdviserAssessment,
     AdviserQuestion,
@@ -34,6 +36,8 @@ from kgcs.advisers import (
     ConflictAdviser,
     ConflictRecommendation,
     CurationOrchestrator,
+    EvidenceLookup,
+    EvidenceRender,
     FailingCompletionClient,
     IdentityAdviser,
     IdentityRecommendation,
@@ -44,6 +48,7 @@ from kgcs.advisers import (
     RecordedCompletionClient,
     StructuredAdviser,
     TimeoutCompletionClient,
+    render_evidence,
 )
 from kgcs.audit import AuditRecorder, AuditSink
 from kgcs.clock import Clock, FixedClock, SystemClock
@@ -334,6 +339,11 @@ __all__ = [
     "CompletionError",
     "CompletionTimeout",
     "CompletionMiss",
+    "EvidenceLookup",
+    "EvidenceRender",
+    "render_evidence",
+    "DEFAULT_EVIDENCE_MAX_CHARS",
+    "UNKNOWN_RELATIONSHIP",
     "AdviserQuestion",
     "AdviserAssessment",
     "Adviser",
