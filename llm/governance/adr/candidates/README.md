@@ -43,8 +43,10 @@ contract changes remain the owner's call, tracked in
 - [0014 — the `ReviewQueue` contract can't express typed outcomes or a typed review case](0014-review-queue-surface-limits.md)
 - [0015 — the reference `MemoryGraphStore` applies only two operation types](0015-reference-store-limited-operation-coverage.md)
 - [0016 — an executed compensation needs re-stamping against the current snapshot](0016-compensation-needs-snapshot-restamp.md)
+- [0023 — durable audit sinks and an assertion-decision semantic record are KGCS-local](0023-durable-audit-sinks-and-assertion-semantic-records.md)
 
 0001–0004 surfaced in Wave 0 (deterministic core); 0005–0008 in Wave 2 (ER 5a);
 0009–0011 in Wave 3 (cluster validation + resolution policy + profiles); 0012
 in Wave 4 (LLM curation orchestrator); 0013 in Wave 5 (re-curation); 0014 in
-Wave 6 (review queue); 0015–0016 in Wave 8 (end-to-end).
+Wave 6 (review queue); 0015–0016 in Wave 8 (end-to-end); 0023 in the durable
+audit work (issue #48).

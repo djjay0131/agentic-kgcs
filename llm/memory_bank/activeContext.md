@@ -1,5 +1,31 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-08 (issue #48, branch `feat/48-durable-audit`, **ADR candidate
+0023 — Open**): **the audit streams are durable and now cover assertion /
+re-curation decisions.** Every sink was in-memory (or, for `SemanticAuditRecord`,
+ER-scoped and clock-free), so nothing survived a restart. New
+`kgcs.persistence.sqlite` adds `SqliteAuditSink` / `SqliteExecutionSink` /
+`SqliteSemanticAuditSink`: append-only-at-rest tables whose immutability is
+enforced by `BEFORE UPDATE`/`BEFORE DELETE` triggers (`RAISE(ABORT)`), modelled
+on `agentic-kgis` `src/kgis/ledger/audit.py`. The in-memory sinks remain the
+defaults. `SemanticAuditRecord` gains an injected-clock `recorded_at` and a
+`decision_kind`; a sibling `AssertionSemanticAuditRecord` carries the same
+decision lineage (baseline, adviser assessments, final, `plan_id`, `VersionSet`,
+`AssertionReplayInputs`) for the evolution path, produced by
+`SemanticAuditBuilder.build_assertion` and wired into `EvolutionRouter` through
+`EvolutionAuditRecorder` (the router depends on the call, not the
+`observability` module — no runtime import cycle). Read API:
+`records_for_trace` / `records_for_assertion` / `records_for_operation` (indexed
+ref tables). `replay()` now dispatches over both record families; tests persist
+to a file, reopen the connection, and replay ER **and** assertion decisions to
+byte-identical output. No `kg_contracts` change. Candidate ids are **not** in the
+records: agentic-kgis#58 (U3) has not landed. Gates: 644 pytest (1 pre-existing
+failure, see below), ruff clean, mypy strict (53 files). **Repo-wide fact:**
+against current `agentic-kgis` main, KGCS `main` has one red test —
+`test_compensate.py::...restores_the_identity_but_not_its_creation_epoch` — because
+KGIS PR #55 added `RESTORE_IDENTITY`, which `INVERSE_OPERATION` now derives for a
+`CREATE_IDENTITY` compensation; unrelated to this change and proven on `BASE`.
+
 Update 2026-10-05 (release, branch `chore/release-1.1.0`): **KGCS `2.0.0` — the
 version is major, not the `1.1.0` the branch and issue #31 name.** Issue #31
 queued a `1.1.0` minor for the ADR-0017 identity-strength change, but `main`
