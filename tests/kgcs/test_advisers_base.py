@@ -84,7 +84,7 @@ class TestProvenance:
         assert assessment.adviser_version == "identity/1"
         assert assessment.model_id == "recorded/echo"
         assert assessment.model_version == "2024.1"
-        assert assessment.prompt_version == "2"
+        assert assessment.prompt_version == "1"
         assert assessment.trace_id == "trace-1"
         assert assessment.recommendation == IdentityRecommendation.SAME
 
