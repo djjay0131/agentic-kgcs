@@ -166,6 +166,26 @@ class ConceptEvolutionPlanner:
         self._matcher_version = matcher_version
         self._adviser_version = adviser_version
 
+    @property
+    def snapshot_version(self) -> str:
+        """The snapshot version this planner stamps on every plan."""
+        return self._snapshot_version
+
+    @property
+    def policy_version(self) -> str:
+        """The policy version this planner records in every operation's provenance."""
+        return self._policy_version
+
+    @property
+    def matcher_version(self) -> str | None:
+        """The matcher version stamped into re-curation provenance (honest null)."""
+        return self._matcher_version
+
+    @property
+    def adviser_version(self) -> str | None:
+        """The adviser version stamped into re-curation provenance (honest null)."""
+        return self._adviser_version
+
     # -- promotion -----------------------------------------------------------
 
     def plan_promotion(

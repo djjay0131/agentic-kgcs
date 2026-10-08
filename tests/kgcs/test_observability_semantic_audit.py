@@ -18,6 +18,7 @@ from kg_contracts.curation import AuditRecord, CurationPlan, ReviewAction, Revie
 from kgcs.advisers.completion import CompletionResponse, RecordedCompletionClient
 from kgcs.advisers.orchestrator import CurationOrchestrator, OrchestrationResult
 from kgcs.advisers.specialists import IdentityAdviser
+from kgcs.clock import FixedClock
 from kgcs.er.blocking import CandidatePair
 from kgcs.er.matcher import CalibrationKey, MatchResult
 from kgcs.er.resolution import ErAction
@@ -34,6 +35,7 @@ from kgcs.recuration.triggers import CurationTrigger, TriggerKind
 from kgcs.review.operations import ReviewOutcome, ReviewOutcomeStatus
 
 _TRACE = "trace-xyz"
+_CLOCK = FixedClock(datetime(2026, 8, 1, tzinfo=UTC))
 _PAIR = CandidatePair.of("paper/a", "paper/b")
 _KEY = CalibrationKey.of(
     graph_id="g1",
@@ -124,7 +126,7 @@ def _trigger() -> CurationTrigger:
 
 def _build() -> SemanticAuditRecord:
     result, replay_inputs = _orchestrated()
-    return SemanticAuditBuilder().build(
+    return SemanticAuditBuilder(clock=_CLOCK).build(
         result,
         replay_inputs,
         trigger=_trigger(),
