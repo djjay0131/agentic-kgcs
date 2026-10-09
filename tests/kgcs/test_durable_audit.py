@@ -502,9 +502,44 @@ class TestAssertionAudit:
         # without the adviser's cited evidence.
         assert record.baseline.kind == EvolutionKind.CONFLICT.value
         assert record.consulted_adviser is True
+        # ADR-0028: the evolved successor has no candidate origin — the honest
+        # null, not the prior record's candidate.
+        assert record.source_candidate_ids == ()
         assert record.versions.adviser_version == "assertion/1"
         assert record.versions.matcher_version == "rules/1"
         assert record.recorded_at == _CLOCK.now()
+
+    def test_the_record_carries_source_candidate_ids_of_the_attached_record(self) -> None:
+        """ADR-0028 / #58: the assertion decision names the candidate(s) the
+        attached record was planned from — the candidate lineage #48 deferred
+        until the contract field landed.
+
+        A record that *was* planned from candidates carries them; an evolved
+        record does not (pinned above). Held to the durable round trip here.
+        """
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        old, new = _assertions("cands")
+        new = new.model_copy(update={"source_candidate_ids": ("cand_alpha", "cand_beta")})
+        trigger = CurationTrigger.of(
+            kind=TriggerKind.NEW_EVIDENCE, evidence_ids=("ev_new",), trace_id=_TRACE
+        )
+        recorder = EvolutionAuditRecorder(builder=SemanticAuditBuilder(clock=_CLOCK), sink=sink)
+        EvolutionRouter(
+            planner=ConceptEvolutionPlanner(snapshot_version="1"), audit=recorder
+        ).route_assertion(
+            recommendation=AssertionRecommendation.SUPPORTS,
+            old_assertion=old,
+            new_assertion=new,
+            trigger=trigger,
+        )
+        record = sink.records()[0]
+        assert isinstance(record, AssertionSemanticAuditRecord)
+        assert record.source_candidate_ids == ("cand_alpha", "cand_beta")
+        # Durable: the pointers survive the SQLite round trip.
+        (reread,) = sink.records_for_trace(_TRACE)
+        assert isinstance(reread, AssertionSemanticAuditRecord)
+        assert reread.source_candidate_ids == ("cand_alpha", "cand_beta")
 
     def test_abstained_adviser_leaves_baseline_equal_to_final(self) -> None:
         old, new = _assertions("b")
