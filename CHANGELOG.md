@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The durable semantic-audit ref tables (`semantic_audit_assertions`,
+  `semantic_audit_operations`) now reject `INSERT OR REPLACE … (rowid, …)` on
+  an existing row, which previously deleted it past the append-only `DELETE`
+  trigger (#55). Existing databases gain the guard on their next open; the
+  on-disk schema version stays 1, so older builds still open them.
+
 ### Added
 
 - The curation planner now records **lineage pointers** on canonical

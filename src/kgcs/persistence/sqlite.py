@@ -34,7 +34,10 @@ back the whole record rather than leaving a half-written entry.
 
 **Schema versioning.** `PRAGMA user_version` carries the schema version; it is
 stamped on first open and checked on every open, so a database written by an
-unknown future schema is refused rather than misread.
+unknown future schema is refused rather than misread. A database written
+before #55 (ref tables without the rowid guard) gains the guard triggers on its
+next open — they are created idempotently, no data is rewritten — and keeps
+schema version 1, because an older reader still reads it correctly.
 
 **Read API.** Besides append `record()` and full `records()`, the sinks answer
 the joins the audit exists for: `records_for_trace`, `records_for_assertion`,
@@ -68,7 +71,10 @@ _SCHEMA_VERSION = 1
 """The current on-disk audit schema version (`PRAGMA user_version`).
 
 Bumped only for a change that an older reader would misread; a bump must ship a
-migration in `_check_schema_version`.
+migration in `_check_schema_version`. The #55 ref-table rowid guards are *not*
+such a change: they are triggers added idempotently on every open, an older
+reader reads a guarded database unchanged, and keeping version 1 lets an older
+build (or a rollback) still open it.
 """
 
 
@@ -105,7 +111,9 @@ def _check_schema_version(conn: sqlite3.Connection) -> None:
 
     `user_version == 0` is a database this module has not stamped yet (its tables
     are created idempotently below), so it is initialized. Any other version is
-    either current or unreadable.
+    either current or unreadable. Additive guards (e.g. the #55 ref-table rowid
+    triggers) need no version change: `_create_append_only` installs them on
+    every open.
     """
     (version,) = conn.execute("PRAGMA user_version").fetchone()
     if version == _SCHEMA_VERSION:
@@ -127,9 +135,11 @@ def _append_only_statements(
     before conflict resolution, so a replacement of an existing key is aborted
     instead of deleting the old row through a path the `DELETE` trigger never
     sees. `key_groups` names one group of columns per uniqueness constraint —
-    the `seq` rowid primary key *and* any content `UNIQUE` key — because `INSERT
-    OR REPLACE` can conflict on either. A table whose content id is deliberately
-    non-unique (its retries are distinct arrivals) is guarded on `seq` alone.
+    the rowid primary key (`seq` where the table declares an `INTEGER PRIMARY
+    KEY`, the bare `rowid` where it does not) *and* any content `UNIQUE` key —
+    because `INSERT OR REPLACE` can conflict on either. A table whose content id
+    is deliberately non-unique (its retries are distinct arrivals) is guarded on
+    its rowid alone.
     """
     statements = [
         f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}\n"
@@ -327,7 +337,7 @@ class SqliteSemanticAuditSink:
                 conn,
                 self._ASSERTION_REFS,
                 "audit_id TEXT NOT NULL, assertion_id TEXT NOT NULL",
-                (("audit_id", "assertion_id"),),
+                (("rowid",), ("audit_id", "assertion_id")),
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._ASSERTION_REFS}_by_assertion "
@@ -337,7 +347,7 @@ class SqliteSemanticAuditSink:
                 conn,
                 self._OPERATION_REFS,
                 "audit_id TEXT NOT NULL, operation_id TEXT NOT NULL",
-                (("audit_id", "operation_id"),),
+                (("rowid",), ("audit_id", "operation_id")),
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._OPERATION_REFS}_by_operation "

@@ -1,5 +1,24 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-09 (issue #55, branch `fix/55-ref-table-guards`): **the durable
+semantic ref tables are now append-only against a rowid `INSERT OR REPLACE`.**
+Follow-up to #48/#51: the `BEFORE INSERT` guards on
+`semantic_audit_assertions` / `semantic_audit_operations` keyed only on the
+content key `(audit_id, ref)`, so `INSERT OR REPLACE INTO … (rowid, …) VALUES
+(<existing rowid>, …)` still deleted and rewrote the row through a path the
+`DELETE` trigger never fired on (reproduced in review). Both ref tables now
+carry a `rowid` duplicate guard alongside the content-key one — the record
+tables were already covered because their `seq INTEGER PRIMARY KEY` *is* the
+rowid. Schema `user_version` stays **1** (review: a bump would lock out older
+builds for no reader benefit); opening an existing database sets the guards
+idempotently (`CREATE TRIGGER IF NOT EXISTS`) and rewrites no data. Tests: per ref table, `INSERT OR REPLACE` on an existing rowid aborts and
+the original row survives (`test_semantic_assertion_ref_table_rejects_rowid_replace`,
+`test_semantic_operation_ref_table_rejects_rowid_replace`), plus a pre-#55 reopen
+that gains the guards with data intact
+(`test_a_v1_database_gains_the_ref_rowid_guards_on_open`). Gates: **726
+pytest** (was 723), ruff clean, mypy strict (54 files). No `kg_contracts`
+change; relates to agentic-kgps#1. ADR candidate 0023 carries the revision.
+
 Update 2026-10-09 (issue #58, branch `feat/58-assertion-candidate-link`,
 **KGCS half of agentic-kgis ADR-0028**): **the canonical record now names its
 source candidates and its successor.** ADR-0028 (Accepted 2026-10-09) put two
