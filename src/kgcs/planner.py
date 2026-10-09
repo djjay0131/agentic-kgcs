@@ -330,6 +330,16 @@ class CurationPlanner:
         `assertion_record_seed` over a committed row would not reproduce the
         id the planner minted, and the ADR-0021 migration backfill rests on
         that round trip being exact.
+
+        `source_candidate_ids` (ADR-0028) names the candidate(s) this record was
+        planned from — here always the single `candidate.candidate_id`. It is
+        read-only provenance metadata, deliberately **outside** the ADR-0021
+        record seed (see `kgcs.records`), so it never participates in minting
+        `assertion_id`; it exists so a caller holding the canonical record can
+        reach the candidate ledger (and, on the structured path, the
+        `candidate_id`-keyed evidence registry) with no scan. An evolved record
+        minted by `ConceptEvolutionPlanner.next_record` carries `()` instead:
+        its origin is the prior record, not a candidate.
         """
         provenance = Provenance(
             source=candidate.source_coordinates.source_type,
@@ -362,6 +372,7 @@ class CurationPlanner:
             derivation=None,
             curation_epoch=0,
             trace_id=candidate.trace_id,
+            source_candidate_ids=(candidate.candidate_id,),
         )
 
     def _attach_operation(

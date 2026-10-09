@@ -318,6 +318,39 @@ class TestRecordIdentity:
             self._attribute(auto_scores, evidence=("ev_a",), value=2014)
         )
 
+    def test_the_attach_record_names_its_source_candidate(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        """ADR-0028: the planned record carries `source_candidate_ids`.
+
+        Set at the single construction site (`CurationPlanner._assertion`), so a
+        caller holding the canonical record can reach the candidate ledger (and
+        the `candidate_id`-keyed evidence registry) with no scan. It is a
+        1-tuple today: the planner planned from exactly one candidate.
+        """
+        candidate = self._attribute(auto_scores, evidence=("ev_a",))
+        plan = _plan([candidate])
+        assert plan is not None
+        (operation,) = plan.operations
+        assert operation.payload["source_candidate_ids"] == [candidate.candidate_id]
+
+    def test_the_source_candidate_is_not_part_of_the_record_id(
+        self, auto_scores: CandidateScores
+    ) -> None:
+        """The pointer is read-only provenance, not record-distinguishing.
+
+        Two candidates asserting the same claim over the same evidence but
+        carrying different `candidate_id`s mint the **same** record id — the
+        pointer is outside the ADR-0021 seed and the record simply names a
+        different origin. This is the *other* half of "a record may not be
+        renamed by backfilling its provenance". (Pinned again in
+        `test_records.py`.)
+        """
+        first = self._attribute(auto_scores, evidence=("ev_a",))
+        renamed = first.model_copy(update={"candidate_id": "cand_OTHER"})
+        assert first.candidate_id != renamed.candidate_id
+        assert self._assertion_id(first) == self._assertion_id(renamed)
+
     def test_the_record_id_is_still_a_pure_function_of_the_candidate(
         self, auto_scores: CandidateScores
     ) -> None:
