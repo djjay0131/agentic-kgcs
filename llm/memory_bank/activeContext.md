@@ -1,5 +1,29 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-08 (issue #52 fix, branch `fix/52-adopt-restore-identity`):
+**`main` was red since agentic-kgis#55; KGCS now adopts `RESTORE_IDENTITY`.**
+
+agentic-kgis#55 (KGIS ADR-0027) retargeted
+`INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` from `CREATE_IDENTITY` to
+`RESTORE_IDENTITY`, a status flip that keeps the identity's original
+`curation_epoch`. CI installs agentic-kgis from `main`, so the contract drift
+broke KGCS silently: `test_the_round_trip_restores_the_identity_but_not_its_creation_epoch`
+failed (628 passed / 1 failed) because the revoke's compensation was now a
+`RESTORE_IDENTITY` the executor's `DEFAULT_SUPPORTED_OPERATIONS` did not list.
+
+Adopted, not pinned back: `CurationOperationType.RESTORE_IDENTITY` joined
+`DEFAULT_SUPPORTED_OPERATIONS`; the test became
+`test_the_round_trip_restores_the_identity_and_its_creation_epoch` and now
+asserts the restored record keeps `created_epoch` and is still found by an
+epoch-scoped read of it. Docstrings and KGCS ADR-0020 corrected (the "round trip
+loses the creation epoch" bound is closed; the named-inverse/executable counts
+are now 8/4). No released agentic-kgis carries `RESTORE_IDENTITY` (still
+`0.3.0`, no tags), so the `>=0.3.0` floor stays and CI still installs from
+`main`; contract drift now fails loudly via
+`test_the_contract_inverse_table_is_the_one_kgcs_adopts`, which pins the whole
+`INVERSE_OPERATION_TYPES` table. Gates: **630 pytest**, ruff clean, mypy strict
+(50 files). Unblocks KGCS #50 and #51.
+
 Update 2026-10-08 (issue #48, branch `feat/48-durable-audit`, **ADR candidate
 0023 — Open**): **the audit streams are durable and now cover assertion /
 re-curation decisions.** Every sink was in-memory (or, for `SemanticAuditRecord`,
@@ -41,6 +65,7 @@ open transaction) is replaced by individual `execute()` calls inside a
 intact. (5) each append wraps the main row and its ref rows in one transaction
 (`with conn:`), so a failed ref insert rolls back the whole record. Gates: 655
 pytest (same one pre-existing failure), ruff clean, mypy strict (53 files).
+Note (merge with main, 2026-10-08): the pre-existing `test_compensate` failure referenced above is fixed on `main` by #52/#54.
 
 Update 2026-10-05 (release, branch `chore/release-1.1.0`): **KGCS `2.0.0` — the
 version is major, not the `1.1.0` the branch and issue #31 name.** Issue #31

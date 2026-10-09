@@ -521,7 +521,9 @@ def revoke_inverse_payload(identity_id: str, created_by_operation_id: str) -> di
     revokes the entity actually in the graph, so a stale copy carried in the
     plan cannot overwrite it; the pre-revoke entity travels instead in the
     compensating operation's own `reversal_data`, which is what makes the
-    revoke compensable by a `CREATE_IDENTITY` in turn. `_entity_payload` — the
+    revoke compensable by a `RESTORE_IDENTITY` in turn (KGIS ADR-0027; before
+    it the inverse was `CREATE_IDENTITY`, which re-stamped the creation epoch).
+    `_entity_payload` — the
     forward payload — is that entity dump, and `Compensator._invert` already
     puts it there generically, so this function deliberately does *not*
     duplicate it.
