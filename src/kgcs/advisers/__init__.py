@@ -35,6 +35,13 @@ from kgcs.advisers.completion import (
     RecordedCompletionClient,
     TimeoutCompletionClient,
 )
+from kgcs.advisers.evidence import (
+    DEFAULT_EVIDENCE_MAX_CHARS,
+    UNKNOWN_RELATIONSHIP,
+    EvidenceLookup,
+    EvidenceRender,
+    render_evidence,
+)
 from kgcs.advisers.orchestrator import CurationOrchestrator, OrchestrationResult
 from kgcs.advisers.specialists import (
     AssertionAdviser,
@@ -61,6 +68,12 @@ __all__ = [
     "CompletionError",
     "CompletionTimeout",
     "CompletionMiss",
+    # evidence-text rendering (KGPS U7, issue #49)
+    "EvidenceLookup",
+    "EvidenceRender",
+    "render_evidence",
+    "DEFAULT_EVIDENCE_MAX_CHARS",
+    "UNKNOWN_RELATIONSHIP",
     # base machinery + provenance
     "AdviserQuestion",
     "AdviserAssessment",

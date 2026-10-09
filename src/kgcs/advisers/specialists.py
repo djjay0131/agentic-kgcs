@@ -57,7 +57,6 @@ class IdentityAdviser(StructuredAdviser):
     ADVISER_TYPE = "identity"
     ADVISER_VERSION = "identity/1"
     TEMPLATE_ID = "identity_resolution"
-    PROMPT_VERSION = "1"
     INSTRUCTION = (
         "You are a bounded identity-resolution adviser. Compare the two entities "
         "using only the cited evidence and recommend whether they are the same "
@@ -89,7 +88,6 @@ class AssertionAdviser(StructuredAdviser):
     ADVISER_TYPE = "assertion"
     ADVISER_VERSION = "assertion/1"
     TEMPLATE_ID = "assertion_relation"
-    PROMPT_VERSION = "1"
     INSTRUCTION = (
         "You are a bounded assertion adviser. Using only the cited evidence, "
         "recommend whether the incoming evidence supports, contradicts, or "
@@ -127,7 +125,6 @@ class ConflictAdviser(StructuredAdviser):
     ADVISER_TYPE = "conflict"
     ADVISER_VERSION = "conflict/1"
     TEMPLATE_ID = "conflict_comparison"
-    PROMPT_VERSION = "1"
     INSTRUCTION = (
         "You are a bounded conflict adviser. Compare the two competing assertions "
         "using only the cited evidence. Preserve both by default; recommend a "
@@ -161,7 +158,6 @@ class ConceptEvolutionAdviser(StructuredAdviser):
     ADVISER_TYPE = "concept_evolution"
     ADVISER_VERSION = "concept_evolution/1"
     TEMPLATE_ID = "concept_evolution"
-    PROMPT_VERSION = "1"
     INSTRUCTION = (
         "You are a bounded concept-evolution adviser. Using only the cited "
         "evidence, recommend whether two concepts should merge, one should split, "
@@ -199,7 +195,6 @@ class OntologyEvolutionAdviser(StructuredAdviser):
     ADVISER_TYPE = "ontology_evolution"
     ADVISER_VERSION = "ontology_evolution/1"
     TEMPLATE_ID = "ontology_evolution"
-    PROMPT_VERSION = "1"
     INSTRUCTION = (
         "You are a bounded ontology-evolution adviser. Using only the cited "
         "evidence, either propose a new ontology candidate, give a rationale for "
