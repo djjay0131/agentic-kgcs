@@ -22,26 +22,42 @@ three streams without any one being authoritative over another (ADR candidate
 0002's trace-join direction, now built on top of it rather than mutating the
 frozen contract).
 
-**Determinism (law 17).** A `SemanticAuditRecord` is a pure function of the
-pipeline artifacts it is assembled from — it holds no wall-clock field of its
-own (the linked `ExecutionRecord` carries the only timestamp), so replaying the
-same decision assembles a byte-identical record. It also carries a
-`ReplayInputs` block: the exact inputs needed to re-run the decision
-(`kgcs.observability.replay`), which is what makes the decision explainable and
-reproducible from the audit alone.
+**Decision timestamp (issue #48).** A `SemanticAuditRecord` now carries its own
+`recorded_at`, read from an injected `Clock` by the builder — a decision audit
+must say *when* the decision was made to be joinable against the operation and
+execution streams, which both carry timestamps. Like every other clocked field
+in the core it is injected, so a `FixedClock` keeps the record a pure function
+of its inputs and a replay assembles a byte-identical record. The *content*
+(ids, decisions, versions) remains clock-free; only `recorded_at` moves. It is
+**optional and defaults to `None`** so a record serialized before #48 (which
+had no timestamp) still validates and replays; `None` is the honest unknown, not
+a fabricated instant.
+
+**Assertion and re-curation decisions (issue #48).** The ER-decision record has
+a sibling, `AssertionSemanticAuditRecord`, with the same decision-lineage shape
+(baseline, adviser assessments, final, plan_id, versions, replay inputs) for the
+assertion / concept-evolution path (`kgcs.recuration.evolution`). It is produced
+by the same `SemanticAuditBuilder` (via `build_assertion`) and recorded through
+the same `SemanticAuditSink`, so the two decision families are one stream joined
+by `trace_id` / `plan_id` / assertion refs.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from kg_contracts.assertions import Assertion
 from kg_contracts.identity import IdentityLinkKind
 from pydantic import BaseModel, ConfigDict, Field
 
 from kgcs.advisers.base import AdviserAssessment
 from kgcs.advisers.orchestrator import OrchestrationResult
+from kgcs.advisers.specialists import AssertionRecommendation
+from kgcs.clock import Clock, SystemClock
 from kgcs.er.cluster import ClusterValidation
 from kgcs.er.matcher import MatchResult
 from kgcs.er.resolution import ErDecision
@@ -55,6 +71,53 @@ DEFAULT_POLICY_VERSION = "1"
 """The confidence/routing policy version stamped when none is supplied. Mirrors
 `kgcs.audit.DEFAULT_POLICY_VERSION`: the contract's `ResolutionDecision` carries
 no policy version, so it is supplied here (ADR candidate 0002)."""
+
+
+class DecisionKind(StrEnum):
+    """Which decision family a semantic audit record belongs to.
+
+    A discriminant on the stored record so a durable reader can reconstruct the
+    concrete type (a `union` of records is persisted as JSON, and JSON carries no
+    class). `ER` is an entity-resolution decision (`SemanticAuditRecord`);
+    `ASSERTION` is an assertion / concept-evolution decision
+    (`AssertionSemanticAuditRecord`).
+    """
+
+    ER = "ER"
+    ASSERTION = "ASSERTION"
+
+
+class EvolutionDecision(BaseModel):
+    """An assertion / concept-evolution decision, reduced to its auditable shape.
+
+    The assertion analogue of `ErDecision`: the evolution-spine decision is
+    `EvolutionResult` (`kgcs.recuration.evolution`), a dataclass carrying a full
+    `CurationPlan`. The audit records the *decision*, not the plan — the kind,
+    the rationale, whether it routed to review, whether it preserved both sides
+    as a conflict, the resulting `plan_id`, and the assertion ids it touched —
+    linked to the plan by id, exactly as `SemanticAuditRecord` links to its plan.
+    `kind` is the `EvolutionKind` *value* (a string, so this module does not
+    depend on the re-curation package at import time).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str
+    rationale: str = ""
+    review_required: bool = False
+    conflict: bool = False
+    plan_id: str | None = None
+    assertion_ids: tuple[str, ...] = ()
+
+    @classmethod
+    def deterministic_baseline(cls, kind: str, *, rationale: str) -> "EvolutionDecision":
+        """The conservative core decision *without* adviser input.
+
+        The auto re-curation path, absent advice, preserves both competing
+        assertions and routes to review (§9 law 1 / law 10). This is the baseline
+        a `final` adviser-influenced decision is measured against.
+        """
+        return cls(kind=kind, rationale=rationale, review_required=True, conflict=True)
 
 
 class VersionSet(BaseModel):
@@ -161,6 +224,36 @@ class ReplayInputs(BaseModel):
     trace_id: str = ""
 
 
+class AssertionReplayInputs(BaseModel):
+    """The exact inputs needed to re-run an assertion/evolution decision (law 17).
+
+    The assertion-side analogue of `ReplayInputs`: everything
+    `EvolutionRouter.route_assertion` was called with — the two `Assertion`s, the
+    bounded adviser recommendation, the `CurationTrigger`, and the policy gate —
+    plus the planner version coordinates, captured so
+    `kgcs.observability.replay.replay` can rebuild the planner + router and
+    reproduce the decision from the audit alone. Both assertions and the trigger
+    are frozen and JSON-serializable, so the block survives a persist/reopen.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    old_assertion: Assertion
+    new_assertion: Assertion
+    recommendation: str
+    trigger: CurationTrigger
+    supersession_allowed: bool = True
+    snapshot_version: str = "0"
+    matcher_version: str | None = None
+    adviser_version: str | None = None
+    policy_version: str = DEFAULT_POLICY_VERSION
+    trace_id: str = ""
+
+    def recommendation_enum(self) -> AssertionRecommendation:
+        """The parsed recommendation (a `ValueError` on an unknown value)."""
+        return AssertionRecommendation(self.recommendation)
+
+
 class SemanticAuditRecord(BaseModel):
     """The full decision lineage for one curation decision (decision-scoped).
 
@@ -170,12 +263,14 @@ class SemanticAuditRecord(BaseModel):
     action, the resulting `plan_id`, the optional `execution` ref, the
     `score_vector`, and the full `versions` set — joined to the other two audit
     streams by `trace_id` / `plan_id` / candidate refs. Immutable and
-    JSON-serializable; a pure function of the artifacts it was built from.
+    JSON-serializable; a pure function of the artifacts it was built from apart
+    from `recorded_at`, which the builder reads from its injected `Clock`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     audit_id: str = Field(min_length=1)
+    decision_kind: DecisionKind = DecisionKind.ER
     trace_id: str = ""
     trigger_id: str | None = None
     affected_refs: tuple[str, ...] = ()
@@ -191,6 +286,13 @@ class SemanticAuditRecord(BaseModel):
     score_vector: dict[str, float | None] = Field(default_factory=dict)
     versions: VersionSet = Field(default_factory=VersionSet)
     replay_inputs: ReplayInputs
+    recorded_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the decision was recorded; `None` for a pre-#48 record, "
+            "where the timestamp is unknown."
+        ),
+    )
 
     @property
     def final_action(self) -> str:
@@ -208,18 +310,75 @@ class SemanticAuditRecord(BaseModel):
         return bool(self.assessments)
 
 
+class AssertionSemanticAuditRecord(BaseModel):
+    """The decision lineage for one assertion / concept-evolution decision.
+
+    The sibling of `SemanticAuditRecord` for the re-curation path
+    (`kgcs.recuration.evolution`): the deterministic `baseline`, the adviser
+    `assessments` (with DG-4 provenance), the optional `review`, the `final`
+    evolution decision, the resulting `plan_id`, the optional `execution` ref,
+    the `versions` set, and the `AssertionReplayInputs` that make it replayable —
+    joined to the operation/execution streams by `trace_id` / `plan_id` /
+    assertion and operation ids. Immutable and JSON-serializable; the only
+    non-content field is the injected-clock `recorded_at`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    audit_id: str = Field(min_length=1)
+    decision_kind: DecisionKind = DecisionKind.ASSERTION
+    trace_id: str = ""
+    trigger_id: str | None = None
+    affected_refs: tuple[str, ...] = ()
+
+    baseline: EvolutionDecision
+    assessments: tuple[AdviserAssessment, ...] = ()
+    review: ReviewSummary | None = None
+    final: EvolutionDecision
+
+    plan_id: str | None = None
+    execution: ExecutionRef | None = None
+
+    assertion_ids: tuple[str, ...] = ()
+    operation_ids: tuple[str, ...] = ()
+    versions: VersionSet = Field(default_factory=VersionSet)
+    replay_inputs: AssertionReplayInputs
+    recorded_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the decision was recorded; `None` for a pre-#48 record, "
+            "where the timestamp is unknown."
+        ),
+    )
+
+    @property
+    def final_kind(self) -> str:
+        """The final evolution kind value — the decision the executor would apply."""
+        return self.final.kind
+
+    @property
+    def consulted_adviser(self) -> bool:
+        """True iff at least one adviser assessment was folded into the decision."""
+        return bool(self.assessments)
+
+
+#: Any record a `SemanticAuditSink` may hold — ER or assertion/evolution.
+SemanticAuditRecordT = SemanticAuditRecord | AssertionSemanticAuditRecord
+
+
 @runtime_checkable
 class SemanticAuditSink(Protocol):
-    """Append-only destination for `SemanticAuditRecord`s.
+    """Append-only destination for semantic audit records.
 
     Mirrors `kgcs.audit.AuditSink` and `kgcs.executor.ExecutionAuditSink`: the
     builder *creates* records, a sink *keeps* them. `record` appends one;
-    `records` returns them in append order.
+    `records` returns them in append order. Holds both decision families
+    (`SemanticAuditRecord` and `AssertionSemanticAuditRecord`).
     """
 
-    def record(self, record: SemanticAuditRecord) -> None: ...
+    def record(self, record: SemanticAuditRecordT) -> None: ...
 
-    def records(self) -> list[SemanticAuditRecord]: ...
+    def records(self) -> list[SemanticAuditRecordT]: ...
 
 
 class InMemorySemanticAuditSink:
@@ -232,12 +391,12 @@ class InMemorySemanticAuditSink:
     """
 
     def __init__(self) -> None:
-        self._records: list[SemanticAuditRecord] = []
+        self._records: list[SemanticAuditRecordT] = []
 
-    def record(self, record: SemanticAuditRecord) -> None:
+    def record(self, record: SemanticAuditRecordT) -> None:
         self._records.append(record)
 
-    def records(self) -> list[SemanticAuditRecord]:
+    def records(self) -> list[SemanticAuditRecordT]:
         """Every record appended so far, in order (a defensive copy)."""
         return list(self._records)
 
@@ -247,14 +406,17 @@ class SemanticAuditBuilder:
     """Assembles a `SemanticAuditRecord` from the available pipeline artifacts.
 
     Stateless apart from its injected `IdFactory` (default: derived, so the
-    `audit_id` is a pure function of the decision content) and the stamped
-    `policy_version`. `build` folds an `OrchestrationResult` (baseline + final +
-    assessments), the `ReplayInputs`, and the optional trigger / review /
-    execution artifacts into one immutable record, propagating the universal
-    `trace_id` throughout.
+    `audit_id` is a pure function of the decision content), its injected `Clock`
+    (the one non-content field, `recorded_at`), and the stamped `policy_version`.
+    `build` folds an `OrchestrationResult` (baseline + final + assessments), the
+    `ReplayInputs`, and the optional trigger / review / execution artifacts into
+    one immutable record; `build_assertion` does the same for an
+    assertion/evolution decision, propagating the universal `trace_id`
+    throughout.
     """
 
     id_factory: IdFactory = field(default_factory=DerivedIdFactory)
+    clock: Clock = field(default_factory=SystemClock)
     policy_version: str = DEFAULT_POLICY_VERSION
 
     def build(
@@ -297,12 +459,64 @@ class SemanticAuditBuilder:
             score_vector=dict(replay_inputs.match_result.feature_vector),
             versions=self._versions(replay_inputs, assessments, ontology_version),
             replay_inputs=replay_inputs,
+            recorded_at=self.clock.now(),
+        )
+
+    def build_assertion(
+        self,
+        *,
+        baseline: EvolutionDecision,
+        final: EvolutionDecision,
+        replay_inputs: AssertionReplayInputs,
+        assessments: Sequence[AdviserAssessment] = (),
+        trigger: CurationTrigger | None = None,
+        review: ReviewOutcome | None = None,
+        execution: ExecutionRecord | None = None,
+        plan_id: str | None = None,
+        ontology_version: str | None = None,
+        assertion_ids: Sequence[str] = (),
+        operation_ids: Sequence[str] = (),
+    ) -> AssertionSemanticAuditRecord:
+        """Assemble one immutable `AssertionSemanticAuditRecord`.
+
+        The assertion/evolution analogue of `build`: the caller (the evolution
+        path) supplies the deterministic baseline and final decisions plus the
+        `AssertionReplayInputs`; the builder stamps the ids, versions, and
+        injected-clock `recorded_at`.
+        """
+        trace_id = replay_inputs.trace_id
+        resolved_plan_id = _resolve_plan_id(plan_id, review, execution)
+
+        return AssertionSemanticAuditRecord(
+            audit_id=self._assertion_audit_id(trace_id, final),
+            trace_id=trace_id,
+            trigger_id=trigger.trigger_id if trigger is not None else None,
+            affected_refs=_assertion_affected_refs(trigger, final),
+            baseline=baseline,
+            assessments=tuple(assessments),
+            review=ReviewSummary.of(review) if review is not None else None,
+            final=final,
+            plan_id=resolved_plan_id,
+            execution=ExecutionRef.of(execution) if execution is not None else None,
+            assertion_ids=tuple(assertion_ids),
+            operation_ids=tuple(operation_ids),
+            versions=self._assertion_versions(replay_inputs, assessments, ontology_version),
+            replay_inputs=replay_inputs,
+            recorded_at=self.clock.now(),
         )
 
     def _audit_id(self, trace_id: str, final: ErDecision, plan_id: str | None) -> str:
         """A deterministic content address of the decision (`au_…`)."""
         pair = final.pair
         seed = f"semantic:{trace_id}:{pair.left}:{pair.right}:{final.action.value}:{plan_id or ''}"
+        return self.id_factory.audit_id(seed)
+
+    def _assertion_audit_id(self, trace_id: str, final: EvolutionDecision) -> str:
+        """A deterministic content address of an evolution decision (`au_…`)."""
+        seed = (
+            f"semantic:assertion:{trace_id}:{final.kind}:{final.plan_id or ''}:"
+            f"{','.join(final.assertion_ids)}"
+        )
         return self.id_factory.audit_id(seed)
 
     def _versions(
@@ -323,6 +537,24 @@ class SemanticAuditBuilder:
             ontology_version=ontology_version,
             profile_id=replay_inputs.profile.profile_id,
             profile_version=replay_inputs.profile.version,
+        )
+
+    def _assertion_versions(
+        self,
+        replay_inputs: AssertionReplayInputs,
+        assessments: Sequence[AdviserAssessment],
+        ontology_version: str | None,
+    ) -> VersionSet:
+        """Version coordinates for an evolution decision (honest-null where absent)."""
+        lead = assessments[0] if assessments else None
+        return VersionSet(
+            matcher_version=replay_inputs.matcher_version,
+            adviser_version=lead.adviser_version if lead is not None else replay_inputs.adviser_version,
+            model_id=lead.model_id if lead is not None else None,
+            model_version=lead.model_version if lead is not None else None,
+            prompt_version=lead.prompt_version if lead is not None else None,
+            policy_version=replay_inputs.policy_version or self.policy_version,
+            ontology_version=ontology_version,
         )
 
 
@@ -349,3 +581,19 @@ def _affected_refs(trigger: CurationTrigger | None, match_result: MatchResult) -
         return trigger.target_refs
     pair = match_result.pair
     return (pair.left, pair.right)
+
+
+def _assertion_affected_refs(
+    trigger: CurationTrigger | None, final: EvolutionDecision
+) -> tuple[str, ...]:
+    """The refs an evolution decision touched: the trigger's targets + assertions.
+
+    Deterministic and order-stable: trigger target refs first (identity/assertion
+    /concept refs, in the trigger's fixed order), then any assertion ids named by
+    the decision that the trigger did not already list.
+    """
+    refs: list[str] = list(trigger.target_refs) if trigger is not None else []
+    for assertion_id in final.assertion_ids:
+        if assertion_id not in refs:
+            refs.append(assertion_id)
+    return tuple(refs)

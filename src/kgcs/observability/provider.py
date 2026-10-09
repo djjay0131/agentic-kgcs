@@ -30,7 +30,7 @@ from kgcs.observability.metrics import (
     curation_metrics,
     er_metrics,
 )
-from kgcs.observability.semantic_audit import SemanticAuditRecord, SemanticAuditSink
+from kgcs.observability.semantic_audit import SemanticAuditRecordT, SemanticAuditSink
 
 
 class MetricSnapshot(BaseModel):
@@ -93,7 +93,7 @@ class AuditMetricProvider:
 
     def snapshot(self) -> MetricSnapshot:
         """Read the audit stream and emit the current honest-null metric bundle."""
-        records: list[SemanticAuditRecord] = self._sink.records()
+        records: list[SemanticAuditRecordT] = self._sink.records()
         return MetricSnapshot(
             er=er_metrics(
                 records,

@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from kgcs.er.matcher import CalibrationMetrics, GoldenSet, Matcher, evaluate
 from kgcs.executor.executor import ExecutionRecord
-from kgcs.observability.semantic_audit import SemanticAuditRecord
+from kgcs.observability.semantic_audit import SemanticAuditRecordT
 
 
 class ErMetrics(BaseModel):
@@ -96,7 +96,7 @@ def cluster_precision_recall(
 
 
 def er_metrics(
-    records: Sequence[SemanticAuditRecord] = (),
+    records: Sequence[SemanticAuditRecordT] = (),
     *,
     matcher: Matcher | None = None,
     golden: GoldenSet | None = None,
@@ -145,7 +145,7 @@ def er_metrics(
 
 
 def curation_metrics(
-    records: Sequence[SemanticAuditRecord] = (),
+    records: Sequence[SemanticAuditRecordT] = (),
     *,
     executions: Sequence[ExecutionRecord] = (),
     review_decisions: Sequence[ReviewDecision] = (),

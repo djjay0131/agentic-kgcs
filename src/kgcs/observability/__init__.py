@@ -35,6 +35,13 @@ from kgcs.observability.arms import (
     run_arms,
     should_raise_threshold,
 )
+from kgcs.observability.evolution_audit import (
+    EvolutionAuditRecorder,
+    assertion_ids_of,
+    baseline_decision_of,
+    evolution_decision_of,
+    operation_ids_of,
+)
 from kgcs.observability.metrics import (
     CurationMetrics,
     ErMetrics,
@@ -47,15 +54,20 @@ from kgcs.observability.provider import (
     MetricProvider,
     MetricSnapshot,
 )
-from kgcs.observability.replay import ReplayResult, replay
+from kgcs.observability.replay import ReplayResult, replay, replay_assertion
 from kgcs.observability.semantic_audit import (
     DEFAULT_POLICY_VERSION,
+    AssertionReplayInputs,
+    AssertionSemanticAuditRecord,
+    DecisionKind,
+    EvolutionDecision,
     ExecutionRef,
     InMemorySemanticAuditSink,
     ReplayInputs,
     ReviewSummary,
     SemanticAuditBuilder,
     SemanticAuditRecord,
+    SemanticAuditRecordT,
     SemanticAuditSink,
     VersionSet,
 )
@@ -63,16 +75,28 @@ from kgcs.observability.semantic_audit import (
 __all__ = [
     # semantic audit (the third audit object)
     "SemanticAuditRecord",
+    "AssertionSemanticAuditRecord",
+    "SemanticAuditRecordT",
     "SemanticAuditSink",
     "InMemorySemanticAuditSink",
     "SemanticAuditBuilder",
+    "DecisionKind",
+    "EvolutionDecision",
+    "AssertionReplayInputs",
     "ReplayInputs",
     "VersionSet",
     "ReviewSummary",
     "ExecutionRef",
     "DEFAULT_POLICY_VERSION",
+    # assertion / evolution audit (issue #48)
+    "EvolutionAuditRecorder",
+    "evolution_decision_of",
+    "baseline_decision_of",
+    "assertion_ids_of",
+    "operation_ids_of",
     # replay (law 17)
     "replay",
+    "replay_assertion",
     "ReplayResult",
     # metrics (honest null)
     "ErMetrics",

@@ -26,13 +26,20 @@ never delete a competing assertion. The router holds no store and executes
 nothing; it only produces a plan (`ConceptEvolutionPlanner` output).
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from kg_contracts.assertions import Assertion
 
+from kgcs.advisers.base import AdviserAssessment
 from kgcs.advisers.specialists import AssertionRecommendation
 from kgcs.recuration.evolution import ConceptEvolutionPlanner, EvolutionResult
 from kgcs.recuration.triggers import CurationTrigger
+
+if TYPE_CHECKING:  # pragma: no cover - import only for type checking (no runtime cycle)
+    from kgcs.observability.evolution_audit import EvolutionAuditRecorder
 
 
 @dataclass(frozen=True)
@@ -42,10 +49,15 @@ class EvolutionRouter:
     Injected with the same `ConceptEvolutionPlanner` the deterministic
     re-curation path uses, so a human decision (`ReviewRouter`) and an
     adviser-driven auto decision converge on the identical plan machinery.
-    Pure and stateless.
+    Pure and stateless apart from the optional `audit` recorder it appends to
+    (issue #48): when one is supplied, every routed decision also produces a
+    durable `AssertionSemanticAuditRecord`. The recorder is typed only under
+    `TYPE_CHECKING` so `kgcs.recuration` never imports `kgcs.observability` at
+    runtime — it just calls the small `record_evolution` surface.
     """
 
     planner: ConceptEvolutionPlanner
+    audit: EvolutionAuditRecorder | None = None
 
     def route_assertion(
         self,
@@ -55,6 +67,7 @@ class EvolutionRouter:
         new_assertion: Assertion,
         trigger: CurationTrigger,
         supersession_allowed: bool = True,
+        assessment: AdviserAssessment | None = None,
     ) -> EvolutionResult:
         """Turn an `AssertionAdviser` recommendation into an evolution plan.
 
@@ -62,25 +75,49 @@ class EvolutionRouter:
         from the source's `CurationProfile` / authority): if the profile does
         not permit superseding, a `SUPERSEDES` recommendation is downgraded to a
         preserved conflict routed to review rather than acted on.
+
+        `assessment` is the adviser assessment whose recommendation drove this
+        route, when there was one; it is folded into the semantic audit record's
+        provenance (and, via its `abstained` flag, tells the baseline from the
+        final) but never affects the deterministic routing.
         """
         # Compare by value (StrEnum), so a recommendation stored as its string
         # form on an AdviserAssessment routes the same as the enum member.
         if recommendation == AssertionRecommendation.SUPPORTS:
-            return self.planner.plan_corroboration(
+            result = self.planner.plan_corroboration(
                 corroborating_assertion=new_assertion,
                 corroborated_assertion_id=old_assertion.assertion_id,
                 trigger=trigger,
             )
-        if recommendation == AssertionRecommendation.SUPERSEDES and supersession_allowed:
-            return self.planner.plan_supersession(
+        elif recommendation == AssertionRecommendation.SUPERSEDES and supersession_allowed:
+            result = self.planner.plan_supersession(
                 old_assertion=old_assertion,
                 new_assertion=new_assertion,
                 trigger=trigger,
             )
-        # CONTRADICTS, INSUFFICIENT, or SUPERSEDES-without-permission: preserve
-        # both, pick no winner, route to review (never destroy evidence).
-        return self.planner.plan_conflict(
-            subject_assertion=old_assertion,
-            competing_assertion=new_assertion,
-            trigger=trigger,
-        )
+        else:
+            # CONTRADICTS, INSUFFICIENT, or SUPERSEDES-without-permission: preserve
+            # both, pick no winner, route to review (never destroy evidence).
+            result = self.planner.plan_conflict(
+                subject_assertion=old_assertion,
+                competing_assertion=new_assertion,
+                trigger=trigger,
+            )
+
+        if self.audit is not None:
+            self.audit.record_evolution(
+                result,
+                old_assertion=old_assertion,
+                new_assertion=new_assertion,
+                recommendation=_recommendation_value(recommendation),
+                trigger=trigger,
+                supersession_allowed=supersession_allowed,
+                planner=self.planner,
+                assessment=assessment,
+            )
+        return result
+
+
+def _recommendation_value(recommendation: AssertionRecommendation) -> str:
+    """The stable string form of a recommendation (StrEnum value or plain string)."""
+    return recommendation.value if isinstance(recommendation, AssertionRecommendation) else str(recommendation)
