@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `kgcs.recuration.superseded_pointer(payload)` is the documented
   backward-compatibility reader for an already-persisted `RETRACT_ASSERTION`
   payload's untyped `superseded_by` key; it refuses a self-pointer.
+- `ReplayInputs.rendered_evidence` captures the exact evidence block an adviser
+  prompt carried (`RenderedEvidence`: rendered lines, relationships, and
+  present/absent/error provenance), auto-filled by `SemanticAuditBuilder` from
+  the adviser assessments. Replay rebuilds the identical prompt and request hash
+  **without** the live `EvidenceLookup`/registry, so an evidence-rendered
+  decision (prompt version `2+evidence`) is reproducible. The field is optional
+  and defaults to `None`, so records written before it still load and replay as
+  before. A rebuilt request with no matching recorded fixture is now reported as
+  a `replay` divergence rather than raised.
 
 ### Changed
 

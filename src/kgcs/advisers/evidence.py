@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from kg_contracts.evidence import Evidence, EvidenceAvailability
+from pydantic import BaseModel, ConfigDict
 
 DEFAULT_EVIDENCE_MAX_CHARS = 500
 """Default per-evidence character budget for the text rendered into a prompt.
@@ -90,6 +91,31 @@ class EvidenceRender:
     rendered_ids: tuple[str, ...]
     unresolved_ids: tuple[str, ...]
     truncated: bool
+
+
+class RenderedEvidence(BaseModel):
+    """The exact evidence block an adviser prompt carried (KGCS issue #56).
+
+    `EvidenceRender` is the transient render result; this is the *persistable*
+    capture of it — frozen and JSON-serializable — so a decision audit can store
+    the block the adviser saw and replay rebuild the identical prompt **without**
+    the live `EvidenceLookup`/registry. `context` is the rendered prompt line per
+    cited id, with the escaped id, citation `relationships`, availability marker,
+    and any truncated text already baked in; `rendered_ids`/`unresolved_ids` are
+    the provenance split (`unresolved_ids` = not found or a `get()` that raised);
+    `truncated` mirrors the `evidence_truncated` flag.
+
+    `context` empty means no evidence was rendered (an id-only prompt) — the same
+    honest null as `None` on a `ReplayInputs` that predates this field.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    context: tuple[str, ...] = ()
+    relationships: tuple[tuple[str, str], ...] = ()
+    rendered_ids: tuple[str, ...] = ()
+    unresolved_ids: tuple[str, ...] = ()
+    truncated: bool = False
 
 
 def render_evidence(

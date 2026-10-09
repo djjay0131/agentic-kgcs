@@ -49,6 +49,7 @@ from kgcs.advisers.completion import (
 from kgcs.advisers.evidence import (
     DEFAULT_EVIDENCE_MAX_CHARS,
     EvidenceLookup,
+    RenderedEvidence,
     render_evidence,
 )
 
@@ -82,6 +83,23 @@ class AdviserQuestion(BaseModel):
     context: tuple[str, ...] = ()
     trace_id: str = ""
 
+    def rendered_evidence(self) -> RenderedEvidence | None:
+        """The exact block rendered into the prompt, or `None` when id-only.
+
+        Projects the question's evidence fields into the persistable capture the
+        audit stores (`RenderedEvidence`). `None` means no evidence text/markers
+        were rendered — the question was id-only, so a replay needs no registry.
+        """
+        if not self.evidence_context:
+            return None
+        return RenderedEvidence(
+            context=self.evidence_context,
+            relationships=self.evidence_relationships,
+            rendered_ids=self.rendered_evidence_ids,
+            unresolved_ids=self.unresolved_evidence_ids,
+            truncated=self.evidence_truncated,
+        )
+
 
 class AdviserAssessment(BaseModel):
     """Structured evidence from one adviser — never an operation (§9 law 16).
@@ -95,9 +113,10 @@ class AdviserAssessment(BaseModel):
     ids whose text/markers were actually rendered into the prompt **from a found
     record**, while `unresolved_evidence_ids` are the ids the lookup could not
     resolve (not found, or `get()` raised) — recorded separately so provenance
-    never claims a record that did not exist; `confidence` is `None` when the
-    model gave none (honest null); `abstained` marks an insufficient/failed
-    assessment.
+    never claims a record that did not exist; `rendered_evidence` is the exact
+    persistable block the prompt carried (issue #56), or `None` for an id-only
+    prompt; `confidence` is `None` when the model gave none (honest null);
+    `abstained` marks an insufficient/failed assessment.
 
     `baseline_action_before`/`final_action_after` are the DG-4 before/after
     provenance the `CurationOrchestrator` stamps on: the deterministic Wave-3
@@ -122,6 +141,7 @@ class AdviserAssessment(BaseModel):
     rendered_evidence_ids: tuple[str, ...] = ()
     unresolved_evidence_ids: tuple[str, ...] = ()
     evidence_truncated: bool = False
+    rendered_evidence: RenderedEvidence | None = None
     baseline_action_before: str | None = None
     final_action_after: str | None = None
 
@@ -365,6 +385,7 @@ class StructuredAdviser:
             rendered_evidence_ids=question.rendered_evidence_ids,
             unresolved_evidence_ids=question.unresolved_evidence_ids,
             evidence_truncated=question.evidence_truncated,
+            rendered_evidence=question.rendered_evidence(),
         )
 
     def _abstain(
@@ -397,6 +418,7 @@ class StructuredAdviser:
             rendered_evidence_ids=question.rendered_evidence_ids,
             unresolved_evidence_ids=question.unresolved_evidence_ids,
             evidence_truncated=question.evidence_truncated,
+            rendered_evidence=question.rendered_evidence(),
         )
 
 

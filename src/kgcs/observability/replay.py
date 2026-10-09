@@ -22,9 +22,10 @@ Two decision families, one entry point:
 A divergence is **detected and reported, never hidden**: `ReplayResult.reproduced`
 is `False` with a `divergence` string when the replayed decision differs — for
 example when the caller replays an adviser-influenced decision without supplying
-the matching recorded fixtures. (A missing fixture surfaces as a
-`CompletionMiss` from the adviser machinery — a wiring error, raised loudly, not
-a silent mismatch.)
+the matching recorded fixtures, or when the captured inputs have been altered so
+the rebuilt request no longer matches the recorded fixture. A `CompletionMiss`
+raised while replaying (no recorded completion for the rebuilt request hash) is
+reported as a divergence, not propagated.
 
 Because both record types are frozen and JSON-serializable, replay works on a
 record read straight back from a durable sink (SQLite) exactly as on a live one.
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
+from kgcs.advisers.completion import CompletionMiss
 from kgcs.advisers.orchestrator import CurationOrchestrator
 from kgcs.advisers.specialists import IdentityAdviser
 from kgcs.er.resolution import ErResolutionPolicy
@@ -93,16 +95,20 @@ def _replay_er(
         identity_adviser=identity_adviser,
     )
     inputs = record.replay_inputs
-    replayed = orchestrator.resolve(
-        inputs.match_result,
-        profile=inputs.profile,
-        cluster_validation=inputs.cluster_validation,
-        snapshot_stale=inputs.snapshot_stale,
-        evidence_count=inputs.evidence_count,
-        malformed=inputs.malformed,
-        evidence_ids=inputs.evidence_ids,
-        trace_id=inputs.trace_id,
-    )
+    try:
+        replayed = orchestrator.resolve(
+            inputs.match_result,
+            profile=inputs.profile,
+            cluster_validation=inputs.cluster_validation,
+            snapshot_stale=inputs.snapshot_stale,
+            evidence_count=inputs.evidence_count,
+            malformed=inputs.malformed,
+            evidence_ids=inputs.evidence_ids,
+            trace_id=inputs.trace_id,
+            rendered_evidence=inputs.rendered_evidence,
+        )
+    except CompletionMiss as exc:
+        return _miss_result(record, exc)
 
     recorded_json = record.final.model_dump_json()
     replayed_json = replayed.decision.model_dump_json()
@@ -180,4 +186,22 @@ def _result(
         replayed_final_action=replayed_final,
         consulted_adviser=consulted_adviser,
         divergence=divergence,
+    )
+
+
+def _miss_result(record: SemanticAuditRecord, exc: CompletionMiss) -> ReplayResult:
+    """A divergence result for a replay that hit no recorded completion fixture.
+
+    A `CompletionMiss` on replay means the rebuilt request hash did not match the
+    recorded fixture — the captured inputs (e.g. the rendered evidence block) were
+    altered, or the wrong adviser fixtures were supplied. That is exactly the
+    divergence the audit must surface, so it is reported rather than propagated.
+    `replayed_final_action` is `""`: no decision was produced.
+    """
+    return ReplayResult(
+        reproduced=False,
+        recorded_final_action=record.final.action.value,
+        replayed_final_action="",
+        consulted_adviser=True,
+        divergence=f"replay could not reproduce the recorded request: {exc}",
     )

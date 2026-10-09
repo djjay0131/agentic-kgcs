@@ -43,6 +43,7 @@ from kgcs.advisers.base import AdviserAssessment, AdviserQuestion
 from kgcs.advisers.evidence import (
     DEFAULT_EVIDENCE_MAX_CHARS,
     EvidenceLookup,
+    RenderedEvidence,
     render_evidence,
 )
 from kgcs.advisers.specialists import IdentityAdviser, IdentityRecommendation
@@ -131,6 +132,7 @@ class CurationOrchestrator:
         evidence_ids: tuple[str, ...] = (),
         trace_id: str = "",
         evidence_refs: tuple[EvidenceRef, ...] = (),
+        rendered_evidence: RenderedEvidence | None = None,
     ) -> OrchestrationResult:
         """Decide one pair: baseline first, advice only if the baseline defers.
 
@@ -139,7 +141,9 @@ class CurationOrchestrator:
         thread evidence and trace provenance into the adviser question.
         `evidence_refs` supplies the citation relationship per id; with an
         injected `evidence_lookup` the question's evidence text is rendered into
-        the prompt (KGPS U7, issue #49).
+        the prompt (KGPS U7, issue #49). `rendered_evidence` lets a replay inject
+        the exact block a recorded decision rendered, so the identical prompt is
+        rebuilt without the live registry (issue #56).
         """
         baseline = self._policy.decide(
             match_result,
@@ -162,6 +166,7 @@ class CurationOrchestrator:
                 evidence_refs=evidence_refs,
                 evidence_lookup=self._evidence_lookup,
                 evidence_max_chars=self._evidence_max_chars,
+                rendered_evidence=rendered_evidence,
             )
         except Exception:  # noqa: BLE001 — a broken evidence lookup must never escape `resolve`
             return OrchestrationResult(decision=baseline, baseline=baseline, consulted=False)
@@ -249,6 +254,7 @@ def _identity_question(
     evidence_refs: tuple[EvidenceRef, ...] = (),
     evidence_lookup: EvidenceLookup | None = None,
     evidence_max_chars: int = DEFAULT_EVIDENCE_MAX_CHARS,
+    rendered_evidence: RenderedEvidence | None = None,
 ) -> AdviserQuestion:
     """Build the deterministic identity question for a scored pair.
 
@@ -257,6 +263,10 @@ def _identity_question(
     without any hidden state. With an `evidence_lookup`, the cited evidence text
     is rendered into `evidence_context` here — the identity path previously never
     filled it, so the LLM judged support without seeing any evidence (issue #49).
+
+    A supplied `rendered_evidence` (a replay of a recorded decision) is used
+    verbatim and the lookup is not consulted, so the rebuilt question carries the
+    identical block without needing the live registry (issue #56).
     """
     pair = match_result.pair
     question = AdviserQuestion(
@@ -269,6 +279,16 @@ def _identity_question(
         ),
         trace_id=trace_id,
     )
+    if rendered_evidence is not None:
+        return question.model_copy(
+            update={
+                "evidence_context": rendered_evidence.context,
+                "evidence_relationships": rendered_evidence.relationships,
+                "rendered_evidence_ids": rendered_evidence.rendered_ids,
+                "unresolved_evidence_ids": rendered_evidence.unresolved_ids,
+                "evidence_truncated": rendered_evidence.truncated,
+            }
+        )
     if evidence_lookup is None or not evidence_ids:
         return question
     render = render_evidence(

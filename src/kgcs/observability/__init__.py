@@ -24,6 +24,7 @@ The four seams:
   defined here so there is no reverse dependency into KGCS.
 """
 
+from kgcs.advisers.evidence import RenderedEvidence
 from kgcs.observability.arms import (
     DEFAULT_ENABLED_ARMS,
     ArmResult,
@@ -84,6 +85,7 @@ __all__ = [
     "EvolutionDecision",
     "AssertionReplayInputs",
     "ReplayInputs",
+    "RenderedEvidence",
     "VersionSet",
     "ReviewSummary",
     "ExecutionRef",
