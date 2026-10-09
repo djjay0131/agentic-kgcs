@@ -345,6 +345,11 @@ class TestSupersessionRollback:
         assert live.assertion_id == old.assertion_id
         assert live.object_value == 2015
         assert live.status is CurationStatus.ACTIVE
+        # ADR-0028: compensation clears the `superseded_by` pointer by
+        # re-attaching the pre-retraction copy, whose pointer is None.
+        # `mark_superseded(replaced_by=None)` cannot clear a pointer (it leaves
+        # an existing one as-is), so re-attachment is what does it.
+        assert live.superseded_by is None
 
         # And nothing was deleted: both records remain queryable, one row per
         # `assertion_id` (§9 law 10 — rollback never rewrites history). The

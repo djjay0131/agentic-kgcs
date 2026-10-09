@@ -47,6 +47,15 @@ from kg_contracts.testing.factories import (
 )
 from kg_contracts.testing.memory import MemoryGraphStore
 
+from kgcs.ids import DerivedIdFactory
+from kgcs.recuration.evolution import superseded_pointer
+
+#: Deterministic assertion-id minter for the re-curation step. A successor id
+#: must be a *well-formed* assertion id (`as_` + ULID) so the ADR-0028
+#: `superseded_by` pointer it lands in passes the contract validator and the
+#: store's `mark_superseded(..., replaced_by=...)` check.
+_ASSERTION_IDS = DerivedIdFactory()
+
 # The AUTO band's scores: an authoritative structured source reads its rows
 # exactly (extraction 1.0) from a reliable registry (source 0.99). Identity
 # confidence is intentionally omitted — a structured registry's admission does
@@ -128,7 +137,16 @@ class E2EGraphStore(MemoryGraphStore):
                             f"SUPERSEDED status change, not {new_status.value}"
                         )
                     superseded_at = datetime.fromisoformat(str(operation.payload["superseded_at"]))
-                    self.mark_superseded(assertion_id, superseded_at)
+                    # ADR-0028: carry the successor pointer through the atomic
+                    # retire primitive. The forward supersession's RETRACT
+                    # payload names it (the operation's transport); a
+                    # compensating/non-successor retract carries none, and
+                    # `mark_superseded(replaced_by=None)` leaves any existing
+                    # pointer as-is (it cannot clear one — compensation clears
+                    # the pointer by *re-attaching* the pre-retraction copy,
+                    # whose `superseded_by` is None).
+                    replaced_by = superseded_pointer(operation.payload)
+                    self.mark_superseded(assertion_id, superseded_at, replaced_by=replaced_by)
                     touched.append(str(operation.payload["subject_identity"]))
                 else:
                     raise NotImplementedError(
@@ -281,13 +299,17 @@ def new_assertion(
     value: object,
     evidence_id: str,
     relationship: EvidenceRelationship,
-    assertion_id: str,
+    seed: str,
     recorded_at: datetime,
 ) -> Assertion:
     """Build an explicit canonical `Assertion` for the re-curation step.
 
     Used for the *second* source's claim (the one that supersedes or conflicts
     with the committed assertion). Evidence is cited so the change is traceable.
+    The id is minted deterministically and **well-formed** (`as_` + ULID):
+    ADR-0028's `superseded_by` points this successor into the retired record,
+    and both the contract validator and `mark_superseded` reject a malformed
+    id, so a hand-written short id would make the supersession unpersistable.
     """
     from kg_contracts.testing.factories import make_assertion
 
@@ -299,4 +321,4 @@ def new_assertion(
         evidence_refs=refs,
         status=CurationStatus.ACTIVE,
         recorded_at=recorded_at,
-    ).model_copy(update={"assertion_id": assertion_id})
+    ).model_copy(update={"assertion_id": _ASSERTION_IDS.assertion_id(seed)})

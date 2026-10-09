@@ -147,7 +147,7 @@ class TestFlagshipSupersession:
             value=shape.value_b,
             evidence_id=shape.ev_b,
             relationship=EvidenceRelationship.CONTRADICTS,
-            assertion_id=f"as_{shape.name}_b",
+            seed=f"e2e:{shape.name}:b",
             recorded_at=assertion_a.recorded_at + timedelta(days=1),
         )
         trigger = CurationTrigger.of(
@@ -243,8 +243,15 @@ class TestFlagshipSupersession:
         )
         superseded = {a.assertion_id: a for a in with_history}
         assert assertion_a.assertion_id in superseded
-        assert superseded[assertion_a.assertion_id].status is CurationStatus.SUPERSEDED
-        assert superseded[assertion_a.assertion_id].superseded_at == assertion_b.recorded_at
+        held = superseded[assertion_a.assertion_id]
+        assert held.status is CurationStatus.SUPERSEDED
+        assert held.superseded_at == assertion_b.recorded_at
+        # ADR-0028: the retired record names its replacement — the typed pointer
+        # survives plan → executor → mark_superseded(replaced_by=...) → store and
+        # is readable off the canonical record with no scan.
+        assert held.superseded_by == assertion_b.assertion_id
+        # The planner's own retired copy already carries the pointer.
+        assert result.superseded_assertions[0].superseded_by == assertion_b.assertion_id
 
         # Bitemporal: as of A's transaction time, the graph still shows A's value.
         as_of_a = store.assertions_for(
@@ -286,7 +293,7 @@ class TestLlmFailureFallsBackToDeterministicBaseline:
             value=shape.value_b,
             evidence_id=shape.ev_b,
             relationship=EvidenceRelationship.CONTRADICTS,
-            assertion_id="as_paper_b_fallback",
+            seed="e2e:paper:b:fallback",
             recorded_at=assertion_a.recorded_at + timedelta(days=1),
         )
         trigger = CurationTrigger.of(
