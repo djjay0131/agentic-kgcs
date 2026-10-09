@@ -55,6 +55,7 @@ from kg_contracts.identity import IdentityLinkKind
 from pydantic import BaseModel, ConfigDict, Field
 
 from kgcs.advisers.base import AdviserAssessment
+from kgcs.advisers.evidence import RenderedEvidence
 from kgcs.advisers.orchestrator import OrchestrationResult
 from kgcs.advisers.specialists import AssertionRecommendation
 from kgcs.clock import Clock, SystemClock
@@ -208,8 +209,15 @@ class ReplayInputs(BaseModel):
     JSON-serializable), the cluster verdict, and the evidence/trace threaded into
     the adviser question. The one input *not* captured is the recorded LLM
     completion fixture: the replay caller supplies the same
-    `RecordedCompletionClient` (a missing fixture is a wiring error surfaced
-    loudly, never silently reproduced).
+    `RecordedCompletionClient` (a rebuilt request with no matching fixture is
+    reported by `replay` as a divergence, never silently reproduced).
+
+    `rendered_evidence` (issue #56) captures the exact evidence block the adviser
+    prompt carried — rendered lines, relationships, and provenance — so a replay
+    rebuilds the identical prompt **without** the live `EvidenceLookup`/registry.
+    It is optional and defaults to `None`, meaning no evidence was rendered (an
+    id-only prompt, or a record written before this field existed); such a record
+    still validates and replays as before.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -222,6 +230,7 @@ class ReplayInputs(BaseModel):
     malformed: bool = False
     evidence_ids: tuple[str, ...] = ()
     trace_id: str = ""
+    rendered_evidence: RenderedEvidence | None = None
 
 
 class AssertionReplayInputs(BaseModel):
@@ -442,11 +451,16 @@ class SemanticAuditBuilder:
         `trace_id` is taken from `replay_inputs` (the universal trace that flowed
         through the pipeline). The resulting `plan_id` is resolved from the
         explicit argument, else the review's plan, else the execution's plan.
+
+        If the caller did not already capture the rendered evidence block, it is
+        filled from the adviser assessments (the exact block the adviser saw), so
+        an evidence-rendered decision is replayable by construction (issue #56).
         """
         baseline = orchestration.baseline
         final = orchestration.decision
         assessments = orchestration.assessments
         trace_id = replay_inputs.trace_id
+        replay_inputs = _capture_rendered_evidence(replay_inputs, assessments)
 
         review_summary = ReviewSummary.of(review) if review is not None else None
         execution_ref = ExecutionRef.of(execution) if execution is not None else None
@@ -566,6 +580,27 @@ class SemanticAuditBuilder:
             policy_version=replay_inputs.policy_version or self.policy_version,
             ontology_version=ontology_version,
         )
+
+
+def _capture_rendered_evidence(
+    replay_inputs: ReplayInputs, assessments: Sequence[AdviserAssessment]
+) -> ReplayInputs:
+    """Fill `rendered_evidence` from the adviser block if the caller left it unset.
+
+    A decision that folded in adviser advice carries the exact rendered evidence
+    block on its assessments (issue #56); copying the first present one onto the
+    replay inputs makes the record replayable without the live registry. An
+    explicit caller value is never overwritten, and a decision whose prompt was
+    id-only (or had no adviser) stays `None`.
+    """
+    if replay_inputs.rendered_evidence is not None:
+        return replay_inputs
+    for assessment in assessments:
+        if assessment.rendered_evidence is not None:
+            return replay_inputs.model_copy(
+                update={"rendered_evidence": assessment.rendered_evidence}
+            )
+    return replay_inputs
 
 
 def _resolve_plan_id(
