@@ -58,3 +58,15 @@ assertion-decision contract type and an append-only sink protocol into
 keeps the contract free of engine and I/O code. Relates to ADR candidate 0002
 (audit lacks candidate lineage) and 0012 (no contract home for an adviser
 assessment).
+
+## Revision (issue #55)
+
+The first cut guarded the two ref tables (`semantic_audit_assertions`,
+`semantic_audit_operations`) only on their content key `(audit_id, ref)`, not on
+the implicit rowid — so `INSERT OR REPLACE … (rowid, …)` against an existing row
+still replaced it (reproduced in review of #51). Schema version `2` adds a
+`rowid` duplicate guard to both ref tables, matching the record tables (whose
+integer primary key `seq` *is* the rowid, so they were already covered). A
+version-1 database is migrated in place on open: the guard trigger is created
+idempotently by the same `CREATE TRIGGER IF NOT EXISTS` path, with no data
+rewrite.

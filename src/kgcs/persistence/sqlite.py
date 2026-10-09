@@ -34,7 +34,9 @@ back the whole record rather than leaving a half-written entry.
 
 **Schema versioning.** `PRAGMA user_version` carries the schema version; it is
 stamped on first open and checked on every open, so a database written by an
-unknown future schema is refused rather than misread.
+unknown future schema is refused rather than misread. A version-1 database
+(pre-#55, ref tables without the rowid guard) is brought forward on open: the
+guard triggers are created idempotently, no data is rewritten.
 
 **Read API.** Besides append `record()` and full `records()`, the sinks answer
 the joins the audit exists for: `records_for_trace`, `records_for_assertion`,
@@ -64,11 +66,26 @@ from kgcs.observability.semantic_audit import (
     SemanticAuditRecordT,
 )
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 """The current on-disk audit schema version (`PRAGMA user_version`).
+
+Version 2 adds a `rowid` duplicate guard to the semantic ref tables
+(`semantic_audit_assertions`, `semantic_audit_operations`): a raw `INSERT OR
+REPLACE INTO … (rowid, …)` conflicted on the rowid primary key, deleting the
+existing row through a path the `DELETE` trigger never fired on (issue #55). A
+version-1 database is migrated in place on open — the supplied guard triggers
+are created idempotently by `_create_append_only`, with no data rewrite.
 
 Bumped only for a change that an older reader would misread; a bump must ship a
 migration in `_check_schema_version`.
+"""
+
+_PRIOR_VERSIONS = (0, 1)
+"""Schema versions this build can open and bring forward.
+
+`0` is unstamped (a fresh database, or one written before versioning); `1` is a
+pre-#55 database whose ref tables lack the rowid guard. Both are accepted and
+stamped with `_SCHEMA_VERSION`; any other version is refused.
 """
 
 
@@ -101,16 +118,18 @@ def _schema_transaction(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _check_schema_version(conn: sqlite3.Connection) -> None:
-    """Stamp a fresh database with `_SCHEMA_VERSION`; refuse an unknown one.
+    """Stamp a fresh or migratable database with `_SCHEMA_VERSION`; refuse others.
 
     `user_version == 0` is a database this module has not stamped yet (its tables
-    are created idempotently below), so it is initialized. Any other version is
-    either current or unreadable.
+    are created idempotently below), so it is initialized. Version `1` predates
+    the ref-table rowid guards (issue #55); it is brought forward here and the
+    missing triggers are created idempotently by `_create_append_only` — no data
+    is rewritten. Any other version is either current or unreadable.
     """
     (version,) = conn.execute("PRAGMA user_version").fetchone()
     if version == _SCHEMA_VERSION:
         return
-    if version == 0:
+    if version in _PRIOR_VERSIONS:
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         return
     raise SchemaVersionError(
@@ -127,9 +146,11 @@ def _append_only_statements(
     before conflict resolution, so a replacement of an existing key is aborted
     instead of deleting the old row through a path the `DELETE` trigger never
     sees. `key_groups` names one group of columns per uniqueness constraint —
-    the `seq` rowid primary key *and* any content `UNIQUE` key — because `INSERT
-    OR REPLACE` can conflict on either. A table whose content id is deliberately
-    non-unique (its retries are distinct arrivals) is guarded on `seq` alone.
+    the rowid primary key (`seq` where the table declares an `INTEGER PRIMARY
+    KEY`, the bare `rowid` where it does not) *and* any content `UNIQUE` key —
+    because `INSERT OR REPLACE` can conflict on either. A table whose content id
+    is deliberately non-unique (its retries are distinct arrivals) is guarded on
+    its rowid alone.
     """
     statements = [
         f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}\n"
@@ -327,7 +348,7 @@ class SqliteSemanticAuditSink:
                 conn,
                 self._ASSERTION_REFS,
                 "audit_id TEXT NOT NULL, assertion_id TEXT NOT NULL",
-                (("audit_id", "assertion_id"),),
+                (("rowid",), ("audit_id", "assertion_id")),
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._ASSERTION_REFS}_by_assertion "
@@ -337,7 +358,7 @@ class SqliteSemanticAuditSink:
                 conn,
                 self._OPERATION_REFS,
                 "audit_id TEXT NOT NULL, operation_id TEXT NOT NULL",
-                (("audit_id", "operation_id"),),
+                (("rowid",), ("audit_id", "operation_id")),
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._OPERATION_REFS}_by_operation "

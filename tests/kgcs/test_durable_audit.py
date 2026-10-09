@@ -317,6 +317,38 @@ class TestAppendOnly:
             record.audit_id
         ]
 
+    def test_semantic_assertion_ref_table_rejects_rowid_replace(self) -> None:
+        # The ref tables carry no `seq` column, but SQLite still gives them an
+        # implicit rowid primary key, so `INSERT OR REPLACE … (rowid, …)` deleted
+        # the existing row through a path the `DELETE` trigger never fired on
+        # (issue #55). The rowid guard closes it, and the original row survives.
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        record = _assertion_record(sink)
+        assertion_id = record.assertion_ids[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_assertions "
+                "(rowid, audit_id, assertion_id) VALUES (1, 'au_x', 'as_x')"
+            )
+        assert [r.audit_id for r in sink.records_for_assertion(assertion_id)] == [
+            record.audit_id
+        ]
+
+    def test_semantic_operation_ref_table_rejects_rowid_replace(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        record = _assertion_record(sink)
+        operation_id = record.operation_ids[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_operations "
+                "(rowid, audit_id, operation_id) VALUES (1, 'au_x', 'op_x')"
+            )
+        assert [r.audit_id for r in sink.records_for_operation(operation_id)] == [
+            record.audit_id
+        ]
+
 
 # --- per-append atomicity -----------------------------------------------------
 
@@ -351,20 +383,53 @@ class TestSchemaVersioning:
     def test_fresh_connection_is_stamped_with_the_current_version(self) -> None:
         conn = sqlite3.connect(":memory:")
         SqliteAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
 
     def test_all_three_sinks_agree_on_the_version(self) -> None:
         conn = sqlite3.connect(":memory:")
         SqliteAuditSink(conn)
         SqliteExecutionSink(conn)
         SqliteSemanticAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
 
     def test_unknown_schema_version_is_refused_on_open(self) -> None:
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA user_version = 99")
         with pytest.raises(SchemaVersionError):
             SqliteAuditSink(conn)
+
+    def test_a_v1_database_gains_the_ref_rowid_guards_on_open(self) -> None:
+        # A pre-#55 (version-1) database is exactly this schema minus the
+        # ref-table rowid guards, so build the current one and strip them.
+        conn = sqlite3.connect(":memory:")
+        sink = SqliteSemanticAuditSink(conn)
+        record = _assertion_record(sink)
+        assertion_id = record.assertion_ids[0]
+        operation_id = record.operation_ids[0]
+        conn.execute("DROP TRIGGER semantic_audit_assertions_no_replace_rowid")
+        conn.execute("DROP TRIGGER semantic_audit_operations_no_replace_rowid")
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        # Opening with the current build migrates the version and installs the
+        # missing guards idempotently; the existing rows are not rewritten.
+        SqliteSemanticAuditSink(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_assertions "
+                "(rowid, audit_id, assertion_id) VALUES (1, 'au_x', 'as_x')"
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT OR REPLACE INTO semantic_audit_operations "
+                "(rowid, audit_id, operation_id) VALUES (1, 'au_x', 'op_x')"
+            )
+        assert [r.audit_id for r in sink.records_for_assertion(assertion_id)] == [
+            record.audit_id
+        ]
+        assert [r.audit_id for r in sink.records_for_operation(operation_id)] == [
+            record.audit_id
+        ]
 
 
 # --- transactions on a shared connection --------------------------------------
@@ -387,7 +452,7 @@ class TestSharedConnection:
         conn = sqlite3.connect(":memory:")
         SqliteSemanticAuditSink(conn)
         SqliteSemanticAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 # --- backward compatibility with pre-#48 records ------------------------------
