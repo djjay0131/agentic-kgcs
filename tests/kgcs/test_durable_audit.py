@@ -383,14 +383,14 @@ class TestSchemaVersioning:
     def test_fresh_connection_is_stamped_with_the_current_version(self) -> None:
         conn = sqlite3.connect(":memory:")
         SqliteAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 
     def test_all_three_sinks_agree_on_the_version(self) -> None:
         conn = sqlite3.connect(":memory:")
         SqliteAuditSink(conn)
         SqliteExecutionSink(conn)
         SqliteSemanticAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 
     def test_unknown_schema_version_is_refused_on_open(self) -> None:
         conn = sqlite3.connect(":memory:")
@@ -398,9 +398,9 @@ class TestSchemaVersioning:
         with pytest.raises(SchemaVersionError):
             SqliteAuditSink(conn)
 
-    def test_a_v1_database_gains_the_ref_rowid_guards_on_open(self) -> None:
-        # A pre-#55 (version-1) database is exactly this schema minus the
-        # ref-table rowid guards, so build the current one and strip them.
+    def test_a_pre_55_database_gains_the_ref_rowid_guards_on_open(self) -> None:
+        # A pre-#55 database is exactly this schema minus the ref-table rowid
+        # guards (same version 1), so build the current one and strip them.
         conn = sqlite3.connect(":memory:")
         sink = SqliteSemanticAuditSink(conn)
         record = _assertion_record(sink)
@@ -408,12 +408,11 @@ class TestSchemaVersioning:
         operation_id = record.operation_ids[0]
         conn.execute("DROP TRIGGER semantic_audit_assertions_no_replace_rowid")
         conn.execute("DROP TRIGGER semantic_audit_operations_no_replace_rowid")
-        conn.execute("PRAGMA user_version = 1")
         conn.commit()
-        # Opening with the current build migrates the version and installs the
-        # missing guards idempotently; the existing rows are not rewritten.
+        # Opening with the current build installs the missing guards
+        # idempotently; the version stays 1 and no rows are rewritten.
         SqliteSemanticAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT OR REPLACE INTO semantic_audit_assertions "
@@ -452,7 +451,7 @@ class TestSharedConnection:
         conn = sqlite3.connect(":memory:")
         SqliteSemanticAuditSink(conn)
         SqliteSemanticAuditSink(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
 # --- backward compatibility with pre-#48 records ------------------------------

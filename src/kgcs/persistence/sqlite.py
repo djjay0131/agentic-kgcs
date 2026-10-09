@@ -34,9 +34,10 @@ back the whole record rather than leaving a half-written entry.
 
 **Schema versioning.** `PRAGMA user_version` carries the schema version; it is
 stamped on first open and checked on every open, so a database written by an
-unknown future schema is refused rather than misread. A version-1 database
-(pre-#55, ref tables without the rowid guard) is brought forward on open: the
-guard triggers are created idempotently, no data is rewritten.
+unknown future schema is refused rather than misread. A database written
+before #55 (ref tables without the rowid guard) gains the guard triggers on its
+next open — they are created idempotently, no data is rewritten — and keeps
+schema version 1, because an older reader still reads it correctly.
 
 **Read API.** Besides append `record()` and full `records()`, the sinks answer
 the joins the audit exists for: `records_for_trace`, `records_for_assertion`,
@@ -66,26 +67,14 @@ from kgcs.observability.semantic_audit import (
     SemanticAuditRecordT,
 )
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 1
 """The current on-disk audit schema version (`PRAGMA user_version`).
 
-Version 2 adds a `rowid` duplicate guard to the semantic ref tables
-(`semantic_audit_assertions`, `semantic_audit_operations`): a raw `INSERT OR
-REPLACE INTO … (rowid, …)` conflicted on the rowid primary key, deleting the
-existing row through a path the `DELETE` trigger never fired on (issue #55). A
-version-1 database is migrated in place on open — the supplied guard triggers
-are created idempotently by `_create_append_only`, with no data rewrite.
-
 Bumped only for a change that an older reader would misread; a bump must ship a
-migration in `_check_schema_version`.
-"""
-
-_PRIOR_VERSIONS = (0, 1)
-"""Schema versions this build can open and bring forward.
-
-`0` is unstamped (a fresh database, or one written before versioning); `1` is a
-pre-#55 database whose ref tables lack the rowid guard. Both are accepted and
-stamped with `_SCHEMA_VERSION`; any other version is refused.
+migration in `_check_schema_version`. The #55 ref-table rowid guards are *not*
+such a change: they are triggers added idempotently on every open, an older
+reader reads a guarded database unchanged, and keeping version 1 lets an older
+build (or a rollback) still open it.
 """
 
 
@@ -118,18 +107,18 @@ def _schema_transaction(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _check_schema_version(conn: sqlite3.Connection) -> None:
-    """Stamp a fresh or migratable database with `_SCHEMA_VERSION`; refuse others.
+    """Stamp a fresh database with `_SCHEMA_VERSION`; refuse an unknown one.
 
     `user_version == 0` is a database this module has not stamped yet (its tables
-    are created idempotently below), so it is initialized. Version `1` predates
-    the ref-table rowid guards (issue #55); it is brought forward here and the
-    missing triggers are created idempotently by `_create_append_only` — no data
-    is rewritten. Any other version is either current or unreadable.
+    are created idempotently below), so it is initialized. Any other version is
+    either current or unreadable. Additive guards (e.g. the #55 ref-table rowid
+    triggers) need no version change: `_create_append_only` installs them on
+    every open.
     """
     (version,) = conn.execute("PRAGMA user_version").fetchone()
     if version == _SCHEMA_VERSION:
         return
-    if version in _PRIOR_VERSIONS:
+    if version == 0:
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         return
     raise SchemaVersionError(

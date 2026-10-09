@@ -9,11 +9,11 @@ content key `(audit_id, ref)`, so `INSERT OR REPLACE INTO … (rowid, …) VALUE
 `DELETE` trigger never fired on (reproduced in review). Both ref tables now
 carry a `rowid` duplicate guard alongside the content-key one — the record
 tables were already covered because their `seq INTEGER PRIMARY KEY` *is* the
-rowid. Schema `user_version` bumped **1 → 2**; opening an existing v1 database
-sets the guards idempotently (`CREATE TRIGGER IF NOT EXISTS`) and rewrites no
-data. Tests: per ref table, `INSERT OR REPLACE` on an existing rowid aborts and
+rowid. Schema `user_version` stays **1** (review: a bump would lock out older
+builds for no reader benefit); opening an existing database sets the guards
+idempotently (`CREATE TRIGGER IF NOT EXISTS`) and rewrites no data. Tests: per ref table, `INSERT OR REPLACE` on an existing rowid aborts and
 the original row survives (`test_semantic_assertion_ref_table_rejects_rowid_replace`,
-`test_semantic_operation_ref_table_rejects_rowid_replace`), plus a v1→v2 reopen
+`test_semantic_operation_ref_table_rejects_rowid_replace`), plus a pre-#55 reopen
 that gains the guards with data intact
 (`test_a_v1_database_gains_the_ref_rowid_guards_on_open`). Gates: **726
 pytest** (was 723), ruff clean, mypy strict (54 files). No `kg_contracts`
