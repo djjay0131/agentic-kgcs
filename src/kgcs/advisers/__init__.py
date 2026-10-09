@@ -40,6 +40,7 @@ from kgcs.advisers.evidence import (
     UNKNOWN_RELATIONSHIP,
     EvidenceLookup,
     EvidenceRender,
+    RenderedEvidence,
     render_evidence,
 )
 from kgcs.advisers.orchestrator import CurationOrchestrator, OrchestrationResult
@@ -71,6 +72,7 @@ __all__ = [
     # evidence-text rendering (KGPS U7, issue #49)
     "EvidenceLookup",
     "EvidenceRender",
+    "RenderedEvidence",
     "render_evidence",
     "DEFAULT_EVIDENCE_MAX_CHARS",
     "UNKNOWN_RELATIONSHIP",
