@@ -27,7 +27,9 @@ rejection. Validation answers "should this enter curation at all", not "can
 we act on it without a human".
 """
 
+import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from kg_contracts.candidates import IMPLEMENTED_KINDS, Candidate
@@ -146,31 +148,165 @@ class GraphScopeRule:
         )
 
 
-class ContractVersionRule:
-    """Reject candidates built against a different contract version.
+class ContractVersionMode(StrEnum):
+    """How `ContractVersionRule` decides whether a candidate's contract version
+    is acceptable.
 
-    Fail-closed (governance principle 3): a candidate whose `contract_version`
-    disagrees with the core's cannot be assumed field-compatible, so it is
-    `BAD_DATA` rather than curated on optimistic faith. Candidates default
-    their `contract_version` to `CONTRACT_VERSION`, so a match is the normal
-    case; this rule catches stale or foreign producers.
+    `COMPATIBLE_MINOR` (the default) accepts any candidate on the **same major**
+    as the installed contract whose **minor is not newer** than the installed
+    contract's; the patch is ignored. `kg_contracts` bumps its minor only for
+    backward-compatible, additive changes (`agentic-kgis` ADR-0022/0023,
+    candidate 0011), so a candidate produced at an older minor is still
+    field-compatible and must not be rejected — the ledger keeps the first row
+    per `semantic_key`, so a rejected pre-upgrade row can never be replaced.
+
+    `EXACT` requires string equality with the installed version. It is the
+    escape hatch for a caller who wants the old fail-closed behaviour.
     """
 
-    def __init__(self, expected: str = CONTRACT_VERSION) -> None:
+    COMPATIBLE_MINOR = "compatible-minor"
+    EXACT = "exact"
+
+
+_SEMVER_RE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
+"""Strict ASCII `MAJOR.MINOR.PATCH`, three groups of digits and nothing else."""
+
+
+def _parse_semver(version: str) -> tuple[int, int, int] | None:
+    """Parse strict `MAJOR.MINOR.PATCH` semver, or return `None`.
+
+    Strict means: exactly three dot-separated components, each a non-negative
+    ASCII integer written canonically (no leading zeros, no sign, no
+    whitespace), e.g. `"2.2.0"`. Pre-release/build suffixes (`"2.2.0-rc1"`) are
+    not part of the contract's version grammar and are rejected. This is
+    deliberate: a version this rule cannot parse is `BAD_DATA`, not a guess.
+    """
+    match = _SEMVER_RE.match(version)
+    if match is None:
+        return None
+    major, minor, patch = (int(group) for group in match.groups())
+    if f"{major}.{minor}.{patch}" != version:
+        return None
+    return (major, minor, patch)
+
+
+class ContractVersionRule:
+    """Reject candidates built against an incompatible contract version.
+
+    Fail-closed (governance principle 3): a candidate whose `contract_version`
+    cannot be reconciled with the core's is `BAD_DATA` rather than curated on
+    optimistic faith. Candidates default their `contract_version` to
+    `CONTRACT_VERSION`, so a match is the normal case; this rule catches stale
+    or foreign producers.
+
+    In the default `COMPATIBLE_MINOR` mode the rule accepts a candidate whose
+    version shares the installed **major** and whose **minor is not newer**,
+    ignoring the patch. It rejects, with a reason naming both versions:
+
+    - a candidate with a **different major** — the contract shape is not
+      guaranteed compatible across majors;
+    - a candidate with a **newer minor** than the core — a producer ahead of
+      its consumer; the consumer cannot know the shape it was written against,
+      so it fails closed rather than guess;
+    - a candidate whose version is not strict `MAJOR.MINOR.PATCH` semver.
+
+    `EXACT` mode restores the original string-equality check. An unparseable
+    `expected` version is a misconfiguration and raises `ValueError` in
+    `COMPATIBLE_MINOR` mode; `EXACT` mode never parses it.
+    """
+
+    def __init__(
+        self,
+        expected: str = CONTRACT_VERSION,
+        *,
+        mode: ContractVersionMode = ContractVersionMode.COMPATIBLE_MINOR,
+    ) -> None:
         self._expected = expected
+        self._mode = mode
+        self._expected_semver = _parse_semver(expected)
+        if mode is ContractVersionMode.COMPATIBLE_MINOR and self._expected_semver is None:
+            raise ValueError(
+                f"expected contract version {expected!r} is not strict "
+                "MAJOR.MINOR.PATCH semver, which COMPATIBLE_MINOR mode requires; "
+                "use mode=ContractVersionMode.EXACT to compare it literally"
+            )
+
+    @property
+    def mode(self) -> ContractVersionMode:
+        """The mode this rule was constructed with."""
+        return self._mode
 
     def check(self, candidate: Candidate) -> tuple[RuleViolation, ...]:
-        if candidate.contract_version == self._expected:
+        if self._mode is ContractVersionMode.EXACT:
+            return self._check_exact(candidate.contract_version)
+        return self._check_compatible(candidate.contract_version)
+
+    def _check_exact(self, version: str) -> tuple[RuleViolation, ...]:
+        if version == self._expected:
             return ()
         return (
             RuleViolation(
                 failure_kind=FailureKind.BAD_DATA,
                 reason=(
-                    f"candidate contract_version {candidate.contract_version!r} does not "
-                    f"match the curation core's {self._expected!r}"
+                    f"candidate contract_version {version!r} does not match the "
+                    f"curation core's {self._expected!r} (exact-match mode)"
                 ),
             ),
         )
+
+    def _check_compatible(self, version: str) -> tuple[RuleViolation, ...]:
+        parsed = _parse_semver(version)
+        if parsed is None:
+            return (
+                RuleViolation(
+                    failure_kind=FailureKind.BAD_DATA,
+                    reason=(
+                        f"candidate contract_version {version!r} is not strict "
+                        "MAJOR.MINOR.PATCH semver"
+                    ),
+                ),
+            )
+
+        expected = self._expected_semver
+        if expected is None:  # unreachable: __init__ rejects this in compatible mode
+            return (
+                RuleViolation(
+                    failure_kind=FailureKind.BAD_DATA,
+                    reason=(
+                        f"curation core contract version {self._expected!r} is not "
+                        "strict MAJOR.MINOR.PATCH semver"
+                    ),
+                ),
+            )
+
+        candidate_major, candidate_minor, _ = parsed
+        expected_major, expected_minor, _ = expected
+
+        if candidate_major != expected_major:
+            return (
+                RuleViolation(
+                    failure_kind=FailureKind.BAD_DATA,
+                    reason=(
+                        f"candidate contract_version {version!r} (major {candidate_major}) "
+                        f"has a different major than the curation core's {self._expected!r} "
+                        f"(major {expected_major})"
+                    ),
+                ),
+            )
+
+        if candidate_minor > expected_minor:
+            return (
+                RuleViolation(
+                    failure_kind=FailureKind.BAD_DATA,
+                    reason=(
+                        f"candidate contract_version {version!r} is ahead of the curation "
+                        f"core's {self._expected!r}: same major {candidate_major} but "
+                        f"candidate minor {candidate_minor} > core minor {expected_minor}"
+                    ),
+                ),
+            )
+
+        return ()
 
 
 class ProducerPresentRule:
@@ -253,14 +389,18 @@ def default_validator(
     *,
     graph_id: str | None = None,
     contract_version: str = CONTRACT_VERSION,
+    contract_version_mode: ContractVersionMode = ContractVersionMode.COMPATIBLE_MINOR,
     policy_version: str = DEFAULT_VALIDATION_POLICY_VERSION,
 ) -> RuleBasedValidator:
     """Assemble the v1 default validator.
 
     Always checks supported kind, well-formed graph id, producer presence,
     and contract version. Adds a `GraphScopeRule` only when `graph_id` is
-    given (an engine bound to one graph). Rule order is fixed, so the
-    resulting validator is deterministic and its `reasons` ordering is stable.
+    given (an engine bound to one graph). The contract-version check defaults
+    to `COMPATIBLE_MINOR` (same major, minor not newer than installed); pass
+    `contract_version_mode=ContractVersionMode.EXACT` for the old exact-match
+    rule. Rule order is fixed, so the resulting validator is deterministic and
+    its `reasons` ordering is stable.
     """
     rules: list[ValidationRule] = [
         SupportedKindRule(),
@@ -269,5 +409,5 @@ def default_validator(
     ]
     if graph_id is not None:
         rules.append(GraphScopeRule(graph_id))
-    rules.append(ContractVersionRule(contract_version))
+    rules.append(ContractVersionRule(contract_version, mode=contract_version_mode))
     return RuleBasedValidator(tuple(rules), policy_version=policy_version)

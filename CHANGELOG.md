@@ -5,6 +5,22 @@ All notable changes to `agentic-kgcs` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `ContractVersionRule` now defaults to `ContractVersionMode.COMPATIBLE_MINOR`:
+  a candidate is admitted when its `contract_version` shares the installed
+  major and its minor is **not newer** (patch ignored), instead of requiring an
+  exact match. A `kg_contracts` additive minor bump no longer rejects ledger
+  rows written at an older 2.x — which, because the ledger keeps the first row
+  per `semantic_key`, would otherwise strand them permanently and unrepairably.
+  A different major, a newer minor than installed (producer ahead of consumer),
+  and non-semver versions all still fail closed as `BAD_DATA`, with a reason
+  naming both versions. Pass
+  `contract_version_mode=ContractVersionMode.EXACT` (on the rule or on
+  `default_validator`) to restore the old exact-match behaviour. (ADR-0024)
+
 ## [2.0.0] - 2026-10-05
 
 This is a **major** release: it contains the source-breaking compensation change
