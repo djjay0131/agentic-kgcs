@@ -1,5 +1,37 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-09 (issue #53, branch `feat/53-accept-compatible-minor`,
+**ADR-0024 — Accepted, owner decision 2026-10-09**): **`ContractVersionRule`
+now accepts compatible `kg_contracts` minor versions, so an additive minor bump
+can no longer strand ledger rows.**
+
+`CONTRACT_VERSION` had moved `2.0.0 → 2.1.0` (agentic-kgis ADR-0022/0023) →
+`2.2.0` (candidate 0011), all backward-compatible additive bumps, while the
+rule required an **exact** string match. A candidate persisted before a bump
+carries the older version, is rejected `BAD_DATA` after the consumer upgrades,
+and re-ingest cannot replace it — the ledger keeps the first row per
+`semantic_key`. The exact rule turned a compatible upgrade into permanent data
+loss. Issue #53 escalated the choice; the owner decided **accept compatible
+minor versions** (2026-10-09).
+
+The rule's default is now `ContractVersionMode.COMPATIBLE_MINOR`: strict
+semver (`_parse_semver`, ASCII `[0-9]` + canonical round-trip, no new
+dependency) with the candidate admissible iff `major` matches and `minor <=`
+installed; the patch is ignored. Rejected, each as `BAD_DATA` with a reason
+naming both versions: different major; candidate minor newer than installed
+(producer ahead of consumer — fail closed); unparseable/non-canonical semver
+(leading zeros and `-rc1` suffixes refused, not coerced). `EXACT` mode restores
+the old string equality and is threaded through `default_validator` via
+`contract_version_mode`; an unparseable `expected` raises `ValueError` up front
+in compatible mode. New tests in `tests/kgcs/test_validation.py` cover same
+version, 2.0.0/2.1.0 accepted against 2.2.0, patch ignored, newer minor,
+different major, malformed/non-canonical, exact mode still exact, and the
+default validator's mode. Gates: **711 pytest** (was 699), ruff clean, mypy
+strict (54 files). No `kg_contracts` change. `pyproject` floor stays
+`agentic-kgis>=0.3.0`: `git ls-remote --tags .../agentic-kgis v0.5.0` returned
+nothing (agentic-kgis has no tags at all), so there is no `v0.5.0` to raise to.
+The brief's `agentic-kgps#1` is unrelated to KGCS's dependency set.
+
 Update 2026-10-08 (issue #52 fix, branch `fix/52-adopt-restore-identity`):
 **`main` was red since agentic-kgis#55; KGCS now adopts `RESTORE_IDENTITY`.**
 

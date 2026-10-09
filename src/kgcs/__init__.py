@@ -236,6 +236,7 @@ from kgcs.review import (
 from kgcs.scores import score_vector
 from kgcs.validation import (
     CandidateValidator,
+    ContractVersionMode,
     ContractVersionRule,
     GraphIdWellFormedRule,
     GraphScopeRule,
@@ -261,6 +262,7 @@ __all__ = [
     "GraphIdWellFormedRule",
     "GraphScopeRule",
     "ContractVersionRule",
+    "ContractVersionMode",
     "ProducerPresentRule",
     "default_validator",
     "ResolutionPolicy",
