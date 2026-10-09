@@ -29,6 +29,7 @@ from kgcs.recuration import (
     EvolutionKind,
     InMemoryDependencyIndex,
     TriggerKind,
+    superseded_pointer,
 )
 
 GRAPH = "g1"
@@ -179,7 +180,12 @@ def test_supersession_attaches_new_and_marks_old_superseded_never_deleted() -> N
     assert superseded.assertion_id == "as_old"
     assert superseded.status is CurationStatus.SUPERSEDED
     assert superseded.superseded_at == new.recorded_at
-    # The retract op is a status change to SUPERSEDED (not a delete).
+    # ADR-0028: the TYPED field names the replacement on the retired record.
+    assert superseded.superseded_by == "as_new"
+    # The retract op is a status change to SUPERSEDED (not a delete). The
+    # untyped payload key is retained as the operation transport that drives
+    # `mark_superseded(..., replaced_by=...)` — but the typed field above is the
+    # authoritative reader surface.
     retract = result.plan.operations[1]
     assert retract.payload["new_status"] == CurationStatus.SUPERSEDED.value
     assert retract.payload["superseded_by"] == "as_new"
@@ -414,6 +420,69 @@ class TestSupersessionIsBetweenTwoRecords:
         ]
 
 
+class TestSupersededPointerIsReadable:
+    """ADR-0028: the successor pointer has a typed home and a legacy reader.
+
+    The typed field on the retired record is authoritative. The untyped
+    `superseded_by` payload key is retained as the operation transport, and
+    `superseded_pointer` is the documented backward-compatibility reader for an
+    already-persisted RETRACT payload.
+    """
+
+    def test_the_retired_copy_and_the_payload_agree(self) -> None:
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_old", subject=subject, evidence=("ev_old",))
+        new = _assertion("as_new", subject=subject, evidence=("ev_new",))
+        result = _planner().plan_supersession(
+            old_assertion=old, new_assertion=new, trigger=_trigger()
+        )
+        assert result.plan is not None
+        retract = result.plan.operations[1]
+        assert result.superseded_assertions[0].superseded_by == "as_new"
+        assert superseded_pointer(retract.payload) == "as_new"
+
+    def test_the_legacy_reader_returns_none_when_no_successor_is_named(self) -> None:
+        """A compensating retract (or any hand-built payload) names none.
+
+        `retract_inverse_payload` deliberately omits `superseded_by`: a rollback
+        has no superseding assertion, and `mark_superseded(replaced_by=None)`
+        leaves any existing pointer as-is rather than silently clearing it.
+        """
+        assert superseded_pointer({"assertion_id": "as_old"}) is None
+        assert superseded_pointer({"assertion_id": "as_old", "superseded_by": None}) is None
+        assert superseded_pointer({"superseded_by": "as_new"}) == "as_new"
+
+    def test_the_legacy_reader_refuses_a_self_pointer(self) -> None:
+        """`superseded_by == assertion_id` answers "what replaced this?" with
+        "itself" — the silent-loss shape ADR-0021 removed."""
+        with pytest.raises(ValueError, match="self-pointer"):
+            superseded_pointer({"assertion_id": "as_old", "superseded_by": "as_old"})
+
+    def test_a_compensating_retract_carries_no_pointer(self) -> None:
+        """The inverse of a supersession is a full pre-retraction ATTACH whose
+        payload has `superseded_by=None`, so compensation clears the pointer by
+        re-attachment, not by a writer that can clear it."""
+        subject = new_identity_id(GRAPH)
+        old = _assertion("as_old", subject=subject, evidence=("ev_old",))
+        new = _assertion("as_new", subject=subject, evidence=("ev_new",))
+        result = _planner().plan_supersession(
+            old_assertion=old, new_assertion=new, trigger=_trigger()
+        )
+        assert result.plan is not None
+        comp = Compensator().compensate(result.plan, against_snapshot=1)
+        assert comp.plan is not None
+        # LIFO: the first compensating op restores the retired record.
+        restore = comp.plan.operations[0]
+        assert restore.type is CurationOperationType.ATTACH_ASSERTION
+        # Its payload is the *pre-retraction* assertion, whose `superseded_by`
+        # is None — re-attaching it is what clears the pointer. The forward
+        # RETRACT deliberately carries no successor, and `mark_superseded`
+        # cannot clear a pointer, so compensation clears it by re-attachment.
+        assert restore.payload["assertion_id"] == "as_old"
+        assert restore.payload["superseded_by"] is None
+        assert superseded_pointer(result.plan.operations[1].payload) == "as_new"
+
+
 class TestNextRecord:
     """The minting API a re-assertion needs: a new record of the SAME fact."""
 
@@ -443,6 +512,8 @@ class TestNextRecord:
             update={
                 "status": CurationStatus.SUPERSEDED,
                 "superseded_at": datetime(2026, 2, 2, tzinfo=UTC),
+                "superseded_by": "as_" + "0" * 25 + "1",
+                "source_candidate_ids": ("cand_prior",),
                 "curation_epoch": 7,
             }
         )
@@ -455,6 +526,11 @@ class TestNextRecord:
         )
         assert successor.status is CurationStatus.ACTIVE
         assert successor.superseded_at is None
+        # ADR-0028: both lineage pointers are RESET, never inherited. The
+        # successor is live (so `superseded_by` must clear) and its origin is
+        # the prior record, not the candidate that first minted the fact.
+        assert successor.superseded_by is None
+        assert successor.source_candidate_ids == ()
         assert successor.curation_epoch == 0  # the executor stamps the real one
 
     def test_a_replay_is_refused_rather_than_duplicated(self) -> None:

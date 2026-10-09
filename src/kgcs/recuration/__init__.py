@@ -20,6 +20,7 @@ from kgcs.recuration.evolution import (
     ConceptEvolutionPlanner,
     EvolutionKind,
     EvolutionResult,
+    superseded_pointer,
 )
 from kgcs.recuration.ontology import (
     IllegalOntologyTransition,
@@ -60,6 +61,7 @@ __all__ = [
     "EvolutionResult",
     "ConceptEvolutionPlanner",
     "EvolutionRouter",
+    "superseded_pointer",
     # ontology lifecycle
     "OntologyTermState",
     "TermKind",
