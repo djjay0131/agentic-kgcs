@@ -75,7 +75,9 @@ the revoke has actually committed and the graph says `REVOKED`).
 The reference store implements it, so the executor must be willing to send it.
 Leaving that constant stale would have kept the compensation path dead while
 every other piece of it worked — the executor would have returned
-`UNSUPPORTED_OPERATION` before the store was ever asked.
+`UNSUPPORTED_OPERATION` before the store was ever asked. `RESTORE_IDENTITY`,
+the inverse of a revoke (KGIS ADR-0027), joined the same set in the follow-up
+that adopted it; the same reasoning applies to it.
 
 ### 4. Reverse order is load-bearing, and is now asserted as a sequence
 
@@ -155,25 +157,30 @@ Revoking by reference means a stale copy cannot overwrite the live record.
 
 ### Negative / Tradeoffs
 
-- **The round trip restores the identity but NOT its creation epoch.**
-  `REVOKE_IDENTITY` inverts to `CREATE_IDENTITY`, which restores the entity
-  `ACTIVE` — measured — but `curation_epoch` is assigned by the executor at
-  apply time, so the restored record carries the epoch of the batch that
-  re-created it, not the one that originally created it. This is a **stated
-  bound, not an oversight**: KGIS established (mutant B1′) that making
-  `CREATE_IDENTITY` honour an epoch carried in its payload corrupts the forward
-  leg's own guarantee, so the in-place repair is ruled out. The fix is a
-  distinct `RESTORE_IDENTITY` operation, proposed in agentic-kgis issue #51.
-  KGCS does **not** attempt the in-place fix, and the bound is pinned by
-  `test_the_round_trip_restores_the_identity_but_not_its_creation_epoch` so it
-  is a known limit rather than a surprise.
+- ~~**The round trip restores the identity but NOT its creation epoch.**~~
+  **Closed by adopting KGIS ADR-0027.** At the time of this ADR,
+  `REVOKE_IDENTITY` inverted to `CREATE_IDENTITY`, which restores the entity
+  `ACTIVE` but re-stamps `curation_epoch` at apply time, so the restored record
+  carried the epoch of the batch that re-created it and an epoch-scoped read of
+  the original creation epoch no longer found it. KGIS established (mutant B1′)
+  that making `CREATE_IDENTITY` honour an epoch carried in its payload corrupts
+  the forward leg's own guarantee, so the in-place repair was ruled out and the
+  fix was a distinct operation (agentic-kgis issue #51). That operation is now
+  `CurationOperationType.RESTORE_IDENTITY` (KGIS **ADR-0027**, PR #55): it flips
+  `REVOKED` back to `ACTIVE` and deliberately leaves `curation_epoch` untouched,
+  and `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` was retargeted from
+  `CREATE_IDENTITY` to it. KGCS adopted it in the follow-up that added
+  `RESTORE_IDENTITY` to `DEFAULT_SUPPORTED_OPERATIONS`; the bound is now pinned
+  the other way by
+  `test_the_round_trip_restores_the_identity_and_its_creation_epoch`.
 - **A named inverse is not an executable rollback, and the two must not be
   conflated.** `INVERSE_OPERATION_TYPES` answers *"what type reverses this
   type"* — a vocabulary statement. It does **not** answer *"can this plan be
   rolled back today"*, which depends on what the executing store implements.
-  Measured on the merged contract: **7** types have a named inverse, the
-  reference store executes **3** (`CREATE_IDENTITY`, `ATTACH_ASSERTION`,
-  `REVOKE_IDENTITY`), leaving `RETRACT_ASSERTION`, `MERGE_IDENTITIES`,
+  Measured on the merged contract (KGIS ADR-0027): **8** types have a named
+  inverse, the reference store executes **4** (`CREATE_IDENTITY`,
+  `ATTACH_ASSERTION`, `REVOKE_IDENTITY`, `RESTORE_IDENTITY`), leaving
+  `RETRACT_ASSERTION`, `MERGE_IDENTITIES`,
   `SPLIT_IDENTITY` and `REASSIGN_ASSERTION` named-but-not-executable. So
   `CompensationResult.fully_compensable` means *every operation had an inverse*
   and nothing stronger: an attach plan reports `fully_compensable=True` and its
@@ -192,7 +199,13 @@ Revoking by reference means a stale copy cannot overwrite the live record.
   rather than letting the identity demonstration imply it.
 - KGCS now requires a `kg_contracts` that defines `REVOKE_IDENTITY`,
   `INVERSE_OPERATION_TYPES` and `GraphReadOptions.include_revoked`. This is a
-  hard version floor, not a soft one.
+  hard version floor, not a soft one. Adopting `RESTORE_IDENTITY` (KGIS
+  ADR-0027) adds to it: KGCS now also requires a contract in which
+  `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY] is RESTORE_IDENTITY`. No released
+  `agentic-kgis` carries it yet (still `0.3.0`), so the floor stays `>=0.3.0`
+  and CI installs from `main`; the expected `INVERSE_OPERATION_TYPES` table is
+  pinned by test so drift fails loudly
+  (`tests/kgcs/test_compensate.py::TestInverseMap::test_the_contract_inverse_table_is_the_one_kgcs_adopts`).
 
 ### Risks
 
@@ -265,6 +278,9 @@ Revoking by reference means a stale copy cannot overwrite the live record.
 ## Related Documents
 
 - KGIS ADR-0025 (`REVOKE_IDENTITY` inverts `CREATE_IDENTITY`) — the contract half.
+- KGIS ADR-0027 (`RESTORE_IDENTITY` reverses a revoke at the original epoch;
+  `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` retargeted to it) — the follow-up
+  that closes this ADR's creation-epoch bound.
 - `llm/governance/adr/0018-compensating-plans-assert-post-application-state.md` —
   the shared-constructor lesson this ADR applies to a second operation type.
 - `llm/governance/adr/candidates/0015-reference-store-limited-operation-coverage.md` —

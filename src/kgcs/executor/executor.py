@@ -105,14 +105,18 @@ DEFAULT_EXECUTED_BY = "kgcs.executor/auto"
 #:
 #: `REVOKE_IDENTITY` joined the set with KGIS ADR-0025: the store implements it,
 #: so a `CREATE_IDENTITY` rollback now reaches the store instead of being
-#: refused `UNSUPPORTED_OPERATION` before it gets there. This constant is what
-#: decides that — leaving it stale would have kept the compensation path dead
-#: while every other piece of it worked.
+#: refused `UNSUPPORTED_OPERATION` before it gets there. `RESTORE_IDENTITY`
+#: joined with KGIS ADR-0027 (PR #55), which retargeted
+#: `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` from `CREATE_IDENTITY` to it, so a
+#: revoke's rollback keeps the identity's original creation epoch. This constant
+#: is what decides that — leaving it stale would have kept the compensation path
+#: dead while every other piece of it worked.
 DEFAULT_SUPPORTED_OPERATIONS: frozenset[CurationOperationType] = frozenset(
     {
         CurationOperationType.CREATE_IDENTITY,
         CurationOperationType.ATTACH_ASSERTION,
         CurationOperationType.REVOKE_IDENTITY,
+        CurationOperationType.RESTORE_IDENTITY,
     }
 )
 
