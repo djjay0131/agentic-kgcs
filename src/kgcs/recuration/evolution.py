@@ -420,6 +420,18 @@ class ConceptEvolutionPlanner:
         cleared and `curation_epoch=0` (the executor stamps the real epoch at
         apply time, exactly as a planned assertion does).
 
+        Two ADR-0028 lineage pointers are **reset**, not inherited from
+        `prior`:
+
+        - `source_candidate_ids` is set to the empty tuple. An evolved record's
+          origin is the *prior record*, not the candidate that first minted the
+          fact; inheriting the prior's 1-tuple would claim this successor was
+          planned from that candidate, which it was not. The empty tuple is the
+          honest null ADR-0028 defines for exactly this case.
+        - `superseded_by` is cleared to `None`. The successor is a live record;
+          carrying a pointer would violate the field's partial invariant
+          (`superseded_by` requires `status is SUPERSEDED`).
+
         `provenance` re-points the successor at a **different origin** — the
         second source of a fact whose producer leaves `evidence_refs` empty.
         It is record-distinguishing (ADR-0021), so supplying it alone is
@@ -454,6 +466,8 @@ class ConceptEvolutionPlanner:
                 "recorded_at": recorded_at,
                 "status": CurationStatus.ACTIVE,
                 "superseded_at": None,
+                "superseded_by": None,
+                "source_candidate_ids": (),
                 "curation_epoch": 0,
                 "trace_id": prior.trace_id if trace_id is None else trace_id,
             }
@@ -510,12 +524,26 @@ class ConceptEvolutionPlanner:
 
         All three raise `ValueError`. A refusal is loud and recoverable; the
         behaviour it replaces was a committed plan that lost the fact.
+
+        **`superseded_by` (ADR-0028).** The retired copy now carries the typed
+        contract field `superseded_by = new_assertion.assertion_id`, so "what
+        replaced this record?" is answerable from the canonical record itself,
+        with no scan. The untyped `superseded_by` key in the RETRACT payload is
+        **retained** — it is the operation's transport that drives
+        `GraphWriter.mark_superseded(..., replaced_by=...)` and the operation's
+        own lineage — but it is no longer the only carrier: the typed field is
+        the authoritative reader surface. `superseded_pointer` below is the
+        documented backward-compatibility reader for a payload persisted before
+        this change. A pointer that names the record itself is refused: a
+        self-supersession is the silent data loss ADR-0021 exists to remove (a
+        self-pointer would make "what replaced this?" answer "itself").
         """
         self._check_supersedes(old_assertion, new_assertion)
         superseded_old = old_assertion.model_copy(
             update={
                 "status": CurationStatus.SUPERSEDED,
                 "superseded_at": new_assertion.recorded_at,
+                "superseded_by": new_assertion.assertion_id,
             }
         )
         attach_new = self._attach(trigger, new_assertion)
@@ -719,6 +747,39 @@ class ConceptEvolutionPlanner:
             policy_version=self._policy_version,
         )
         return {INVERSE_PAYLOAD_KEY: dict(inverse_payload), **provenance}
+
+
+def superseded_pointer(payload: Mapping[str, object]) -> str | None:
+    """The successor a persisted `RETRACT_ASSERTION` payload names (ADR-0028).
+
+    **Backward-compatibility reader.** Before ADR-0028 the only place the
+    successor lived was the untyped ``superseded_by`` key in this payload. The
+    contract now carries it as ``Assertion.superseded_by`` on the retired
+    record, and that **typed field is the authoritative reader surface** — a
+    caller answering "what replaced this?" should read the record, not replay
+    an operation. This function remains for the one job the typed field cannot
+    do: recovering the pointer from an **already-persisted** RETRACT payload
+    whose record predates the field (the ADR-0021 re-id backfill must rewrite
+    it, and an audit that walks stored operations reads it).
+
+    Returns ``None`` when the payload names no successor — a compensating
+    retract deliberately carries none (`retract_inverse_payload`), and an
+    absent or non-string value is an honest null. Raises ``ValueError`` for a
+    **self-pointer**: ``superseded_by`` equal to the payload's own
+    ``assertion_id`` is never a valid successor, and reading it as one would
+    answer "what replaced this?" with "itself" — the silent-loss shape
+    ADR-0021 removed.
+    """
+    assertion_id = payload.get("assertion_id")
+    pointer = payload.get("superseded_by")
+    if not isinstance(pointer, str):
+        return None
+    if isinstance(assertion_id, str) and pointer == assertion_id:
+        raise ValueError(
+            f"RETRACT payload for {assertion_id!r} carries superseded_by naming "
+            "itself; a self-pointer is not a successor."
+        )
+    return pointer
 
 
 def _assertion_evidence(assertion: Assertion) -> tuple[str, ...]:

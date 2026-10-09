@@ -152,6 +152,7 @@ class EvolutionAuditRecorder:
             plan_id=result.plan.plan_id if result.plan is not None else None,
             assertion_ids=assertion_ids_of(result),
             operation_ids=operation_ids_of(result),
+            source_candidate_ids=new_assertion.source_candidate_ids,
         )
         self.sink.record(record)
         return record

@@ -11,7 +11,7 @@ instant is the same record, not a new one.
 from datetime import UTC, datetime
 
 import pytest
-from kg_contracts.assertions import Assertion
+from kg_contracts.assertions import Assertion, CurationStatus
 from kg_contracts.evidence import EvidenceRef, EvidenceRelationship, Provenance, ValidPeriod
 from kg_contracts.identity import new_identity_id
 from kg_contracts.testing.factories import make_assertion
@@ -228,6 +228,40 @@ class TestOriginIsInTheSeedButTheProcessorIsNot:
             evidence_refs=base.evidence_refs,
             provenance=base.provenance,
         )
+
+
+class TestLineagePointersAreOutsideTheSeed:
+    """ADR-0028: the two lineage pointers never participate in record identity.
+
+    `source_candidate_ids` and `superseded_by` are read-only provenance metadata
+    on the record. They are deliberately **not** in `record_seed`, so adding or
+    changing either never re-mints an `assertion_id` — the ADR-0021 split (a
+    fact's identity vs. a record's identity) stays intact, and a migration that
+    backfills the pointers cannot rename a record.
+    """
+
+    def test_changing_source_candidate_ids_does_not_change_the_seed(self) -> None:
+        base = make_assertion(subject_identity=SUBJECT, predicate="proposed_year")
+        named = base.model_copy(
+            update={"source_candidate_ids": ("cand_a", "cand_b")}
+        )
+        assert assertion_record_seed(named) == assertion_record_seed(base)
+        assert backfill_record_id(named) == backfill_record_id(base)
+
+    def test_changing_the_superseded_pointer_does_not_change_the_seed(self) -> None:
+        live = make_assertion(subject_identity=SUBJECT, predicate="proposed_year")
+        # The partial invariant requires SUPERSEDED + superseded_at + a
+        # well-formed id; `model_copy` does not re-validate, but build the
+        # honest state so the test is not resting on the skip.
+        retired = live.model_copy(
+            update={
+                "status": CurationStatus.SUPERSEDED,
+                "superseded_at": datetime(2026, 1, 1, tzinfo=UTC),
+                "superseded_by": DerivedIdFactory().assertion_id("successor"),
+            }
+        )
+        assert assertion_record_seed(retired) == assertion_record_seed(live)
+        assert backfill_record_id(retired) == backfill_record_id(live)
 
 
 class TestObjectValuesAreRenderedReproducibly:

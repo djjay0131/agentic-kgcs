@@ -321,6 +321,12 @@ class AssertionSemanticAuditRecord(BaseModel):
     joined to the operation/execution streams by `trace_id` / `plan_id` /
     assertion and operation ids. Immutable and JSON-serializable; the only
     non-content field is the injected-clock `recorded_at`.
+
+    `source_candidate_ids` (ADR-0028) names the candidate(s) the attached
+    record was planned from — the assertion-side analogue of the ER record's
+    candidate lineage, which #48 deferred until the contract field landed. It
+    is `()` (the honest null) for an evolved record, whose origin is the prior
+    record rather than a candidate.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -341,6 +347,7 @@ class AssertionSemanticAuditRecord(BaseModel):
 
     assertion_ids: tuple[str, ...] = ()
     operation_ids: tuple[str, ...] = ()
+    source_candidate_ids: tuple[str, ...] = ()
     versions: VersionSet = Field(default_factory=VersionSet)
     replay_inputs: AssertionReplayInputs
     recorded_at: datetime | None = Field(
@@ -476,13 +483,15 @@ class SemanticAuditBuilder:
         ontology_version: str | None = None,
         assertion_ids: Sequence[str] = (),
         operation_ids: Sequence[str] = (),
+        source_candidate_ids: Sequence[str] = (),
     ) -> AssertionSemanticAuditRecord:
         """Assemble one immutable `AssertionSemanticAuditRecord`.
 
         The assertion/evolution analogue of `build`: the caller (the evolution
         path) supplies the deterministic baseline and final decisions plus the
         `AssertionReplayInputs`; the builder stamps the ids, versions, and
-        injected-clock `recorded_at`.
+        injected-clock `recorded_at`. `source_candidate_ids` is the candidate
+        lineage of the attached record (ADR-0028), `()` for an evolved record.
         """
         trace_id = replay_inputs.trace_id
         resolved_plan_id = _resolve_plan_id(plan_id, review, execution)
@@ -500,6 +509,7 @@ class SemanticAuditBuilder:
             execution=ExecutionRef.of(execution) if execution is not None else None,
             assertion_ids=tuple(assertion_ids),
             operation_ids=tuple(operation_ids),
+            source_candidate_ids=tuple(source_candidate_ids),
             versions=self._assertion_versions(replay_inputs, assessments, ontology_version),
             replay_inputs=replay_inputs,
             recorded_at=self.clock.now(),

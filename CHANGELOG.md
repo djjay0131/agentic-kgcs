@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The curation planner now records **lineage pointers** on canonical
+  assertions, the KGCS half of agentic-kgis ADR-0028 (contract
+  `kg_contracts` 2.3.0). `CurationPlanner` sets
+  `Assertion.source_candidate_ids = (candidate.candidate_id,)` on every
+  `ATTACH_ASSERTION`, so a caller holding an assertion can reach the candidate
+  ledger (and, on the structured path, the `candidate_id`-keyed evidence
+  registry) with no scan. `ConceptEvolutionPlanner.plan_supersession` sets
+  `Assertion.superseded_by = <new record id>` on the retired `SUPERSEDED` copy,
+  so "what replaced this?" is answerable from the record. Neither field is in
+  the ADR-0021 record seed, so adding or changing either never re-mints an
+  `assertion_id`; an evolved record minted by `next_record` carries
+  `source_candidate_ids=()` (its origin is the prior record, not a candidate).
+- `AssertionSemanticAuditRecord.source_candidate_ids` names the candidate(s)
+  the attached record was planned from — the assertion-side candidate lineage
+  issue #48 deferred until the contract field landed (`()` for an evolved
+  record).
+- `kgcs.recuration.superseded_pointer(payload)` is the documented
+  backward-compatibility reader for an already-persisted `RETRACT_ASSERTION`
+  payload's untyped `superseded_by` key; it refuses a self-pointer.
+
 ### Changed
 
 - `ContractVersionRule` now defaults to `ContractVersionMode.COMPATIBLE_MINOR`:
