@@ -1,5 +1,41 @@
 # Active Context — agentic-kgcs
 
+Update 2026-10-09 (issue #58, branch `feat/58-assertion-candidate-link`,
+**KGCS half of agentic-kgis ADR-0028**): **the canonical record now names its
+source candidates and its successor.** ADR-0028 (Accepted 2026-10-09) put two
+read-only lineage pointers on `kg_contracts.Assertion` (contract 2.3.0, KGIS
+PR #69): `source_candidate_ids: tuple[str, ...] = ()` and
+`superseded_by: str | None = None` with a **partial** invariant (set ⇒
+`status is SUPERSEDED` ∧ `superseded_at` set ∧ well-formed id; a `SUPERSEDED`
+record may still carry `None` for a merge or the non-injective ADR-0021
+backfill), plus `GraphWriter.mark_superseded(..., replaced_by=None)`. Neither
+field is in the ADR-0021 record seed.
+
+KGCS: `CurationPlanner._assertion` sets
+`source_candidate_ids=(candidate.candidate_id,)` (the single construction site;
+`ConceptEvolutionPlanner.next_record` resets it to `()` — an evolved record's
+origin is the prior record); `plan_supersession` sets the **typed**
+`superseded_by = new record id` on the retired `SUPERSEDED` copy (the
+self-pointer is already refused by `_check_supersedes`). **Decision:** the
+untyped `superseded_by` key in the forward `RETRACT_ASSERTION` payload is
+**retained** as the operation's transport (it drives
+`mark_superseded(replaced_by=...)`, the primitive ADR-0028 chose over a
+full-copy `put_assertion`); the typed field is the authoritative reader, and
+the new `kgcs.recuration.superseded_pointer(payload)` is the documented
+backward-compatibility reader that refuses a self-pointer. **Compensation
+clears the pointer by re-attachment**: `mark_superseded(replaced_by=None)`
+leaves an existing pointer as-is, so the compensating `ATTACH` re-attaches the
+pre-retraction copy, whose pointer is `None` (pinned e2e in
+`test_e2e_concurrency.py`). Audit: `AssertionSemanticAuditRecord.source_candidate_ids`
+now carries the attached record's candidate lineage (the #51/#48 deferral
+closed). `records.py` unchanged — the seed already ignores both fields; a test
+pins that changing either does not change the record id / backfill.
+Harness: `E2EGraphStore` persists via `mark_superseded(..., replaced_by=...)`.
+Gates: **723 pytest** (was 714), ruff clean, mypy strict (54 files), governance
+4/4. Companion note `llm/governance/kgcs-adr-0028-companion-note.md`; no new
+ADR (semantics unchanged). Consuming requirement: agentic-kgps#1. `pyproject`
+floor stays `agentic-kgis>=0.5.0`; CI installs `@main`, which carries 2.3.0.
+
 Update 2026-10-09 (issue #53, branch `feat/53-accept-compatible-minor`,
 **ADR-0024 — Accepted, owner decision 2026-10-09**): **`ContractVersionRule`
 now accepts compatible `kg_contracts` minor versions, so an additive minor bump
